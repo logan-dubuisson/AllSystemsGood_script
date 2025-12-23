@@ -186,10 +186,10 @@ namespace IngameScript
                 float.TryParse(storedData[3], out storedSecF);
                 if (storedData[4] == "delaysBegin")
                 {
-                    for (int i = 5; storedData[i] != "delaysEnd"; i = i + 2)
+                    for (int i = 5; i < storedData.Length; i = i + 2)
                     {
                         long thisDelayTime = 0;
-                        if (long.TryParse(storedData[i+1], out thisDelayTime))
+                        if (storedData[i] != "delaysEnd" && long.TryParse(storedData[i+1], out thisDelayTime))
                         {
                             actionDelay_t thisDelay = new actionDelay_t(storedData[i], thisDelayTime);
                             storedDelays.Add(thisDelay);
