@@ -44,11 +44,22 @@ namespace IngameScript
 
 
 
+        // START OF USER CODE //
+
+        // CUSTOM TYPES //
+
+        struct actionDelay_t
+        {
+            string action;
+            long delay;
+        }
+        
         // MY GLOBALS HERE //
         string storedArgument = "";
         long ticks = 0;
         long sec = 0;
         float secF = 0f;
+        List<actionDelay_t> delayBuffer = new List<actionDelay_t>();
         bool debug = false;
         bool powerManagerEnabled = false;
         bool breachDetectionEnabled = false;
@@ -65,20 +76,38 @@ namespace IngameScript
 
             foreach (IMyTextSurface lcd in LCD_list)
             {
-                string lcdTarget = ((IMyTerminalBlock)lcd).CustomInfo;
+                string lcdTarget = ((IMyTerminalBlock)lcd).CustomData;
+                if (keyMap.ContainsKey((IMyTerminalBlock)lcd) || lcdTarget.Length == 0) continue;
                 foreach(IMyTerminalBlock block in blockList)
                 {
-                    string blockRef = ((IMyTerminalBlock)block).CustomInfo;
+                    string blockRef = ((IMyTerminalBlock)block).CustomData;
+                    if (blockRef.Length == 0) continue;
                     if (String.Compare(lcdTarget, blockRef) == 0)
                     {
                         keyMap.Add(block, lcd);
-                        blockList.Remove(block);
-                        LCD_list.Remove(lcd);
+                        // blockList.Remove(block);
+                        // LCD_list.Remove(lcd);
                         break;
                     }
                 }
             }
             return keyMap;
+        }
+
+        string[] storeDelays(List<actionDelay_t> delays)
+        {
+            string[] tokens = {"delaysBegin"};
+
+            if (delays.Count > 0)
+            {
+                foreach (actionDelay_t delay in delays)
+                {
+                    // Add delay split here
+                }
+            }
+
+            tokens.Append("delaysEnd");
+            return tokens;
         }
 
         // END USER-DEFINED FUNCTIONS //
@@ -157,7 +186,12 @@ namespace IngameScript
             }
 
             // Argument Handler //
-            if (argument.Length > 0)
+            string actionCall = "";
+            if (updateSource == UpdateType.Trigger && argument.Length > 0 && argument.ToLower().Contains("action:"))
+            {
+                actionCall = argument.Substring("action:".Length, argument.Length - "action:".Length);
+            }
+            else if (argument.Length > 0)
             {
                 storedArgument = argument;
                 string[] args = argument.Split(' ');
@@ -229,7 +263,7 @@ namespace IngameScript
             IMyTextSurface mainComputerMonitor = (IMyTextSurface)Me.GetSurface(0);
             mainComputerMonitor.ContentType = (ContentType)(1);
             mainComputerMonitor.FontColor = green;
-            mainComputerMonitor.FontSize = 1.0f;
+            mainComputerMonitor.FontSize = 0.75f;
             IMyCubeGrid thisGrid = (IMyCubeGrid)Me.CubeGrid;
 
             // Grid block list
@@ -253,10 +287,14 @@ namespace IngameScript
             if (Me.IsRunning)
             {
                 mainComputerMonitor.WriteText("\n\nAllSystemsGood: Program Running...\nTime Elapsed: " + (sec / 3600).ToString("00") + ":" + ((sec / 60) % 60).ToString("00") + ":" + (sec % 60).ToString("00"), true);
+                mainComputerMonitor.WriteText("\n\nModules:\n  Debug: " + (debug ? "ON" : "OFF"), true);
+                mainComputerMonitor.WriteText("\n  Power Manager: " + (powerManagerEnabled ? "ON" : "OFF"), true);
+                mainComputerMonitor.WriteText("\n  Breach Detection: " + (breachDetectionEnabled ? "ON" : "OFF"), true);
+                mainComputerMonitor.WriteText("\n  Watchdog Timer: " + (watchdogEnabled ? "ON" : "OFF"), true);
             }
             else
             {
-                mainComputerMonitor.WriteText("\n\nAllSystemsGood: Program Halted");
+                mainComputerMonitor.WriteText("\n\nAllSystemsGood: Program Halted", true);
             }
 
             // END LOCAL DISPLAY //
@@ -281,6 +319,7 @@ namespace IngameScript
                     {
                         powerConsumed += powerConsumedBlock;
                         isConsumer = false;
+                        break;
                     }
                 }
             }
@@ -350,7 +389,8 @@ namespace IngameScript
 
             foreach (IMyReactor reactor in reactors)
             {
-                IMyTextSurface reactor_monitor = monitorKeys[(IMyTerminalBlock)reactor];
+                IMyTextSurface reactor_monitor; //monitorKeys[(IMyTerminalBlock)reactor];
+                if (!monitorKeys.TryGetValue((IMyTerminalBlock)reactor, out reactor_monitor)) continue;
                 reactor_monitor.ContentType = (ContentType)(1);
                 reactor_monitor.FontColor = green;
                 reactor_monitor.FontSize = 1.25f;
@@ -383,8 +423,8 @@ namespace IngameScript
 
             // HULL BREACH PROTOCOLS //
 
-            // Door-Room key-value pairs
-            Dictionary<IMyDoor, IMyBlockGroup> doorRoomKeys = new Dictionary<IMyDoor, IMyBlockGroup>();
+            // Room-Doors key-value pairs
+            Dictionary<IMyBlockGroup, List<IMyDoor>> doorRoomKeys = new Dictionary<IMyBlockGroup, List<IMyDoor>>();
 
             // List of all doors on grid
             List<IMyDoor> allDoors = new List<IMyDoor>();
@@ -392,28 +432,34 @@ namespace IngameScript
 
             // List of all groups containing the string "Air Vents"
             List<IMyBlockGroup> airVentGroups = new List<IMyBlockGroup>();
-            GridTerminalSystem.GetBlockGroups(airVentGroups);
+            Func<IMyBlockGroup, bool> checkIfVentGroup = group => group.Name.ToLower().Contains("air vents");
+            GridTerminalSystem.GetBlockGroups(airVentGroups, checkIfVentGroup);
+            
+            if (debug) Echo("\n\nRooms found: ");
+
             foreach (IMyBlockGroup group in airVentGroups)
             {
-                // Remove any groups not listed as "Air Vents..."
-                if (!group.Name.Contains("Air Vents"))
+                // String of air vent group after removing "Air Vents - " from group name
+                string ventGroupPrefix = "Air Vents - ";
+                string roomName = group.Name.Substring(ventGroupPrefix.Length, group.Name.Length - ventGroupPrefix.Length).ToLower();
+
+                if (debug) Echo(roomName);
+
+                // List of doors connecting to this room
+                List<IMyDoor> inRoom = new List<IMyDoor>();
+
+                // Add this door to inRoom list if room is listed in CustomData of door
+                foreach (IMyDoor door in allDoors)
                 {
-                    airVentGroups.Remove(group);
-                }
-                else // Group is of air vents
-                {
-                    // Add key (door) to doorRoomKeys with this value (air vent group) if room is listed in CustomInfo of door
-                    foreach (IMyDoor door in allDoors)
+                    if (((IMyTerminalBlock)door).CustomData.ToLower().Contains(roomName))
                     {
-                        // String of air vent group after removing "Air Vents - " from group name
-                        string roomName = group.Name.Remove(0, 9);
-                        if (((IMyTerminalBlock)door).CustomInfo.Contains(roomName))
-                        {
-                            doorRoomKeys.Add(door, group);
-                        }
-                        // If no room name is found, we ignore this door
+                        inRoom.Add(door);
                     }
+                    // If no room name is found, we ignore this door
                 }
+
+                // Add key (vent group) with value inRoom (list of doors connecting room)
+                doorRoomKeys.Add(group, inRoom);
             }
 
             // Room keys (air vent group) with breach status value
@@ -422,6 +468,8 @@ namespace IngameScript
             // Check each room (vent group)
             foreach (IMyBlockGroup ventGroup in airVentGroups)
             {
+                // Add each vent group to breachDetected dictionary
+                breachDetected.Add(ventGroup, false);
                 // List of vents in this room
                 List<IMyAirVent> groupVents = new List<IMyAirVent>();
                 ventGroup.GetBlocksOfType<IMyAirVent>(groupVents);
@@ -433,23 +481,35 @@ namespace IngameScript
                     if (!vent.CanPressurize && !vent.Depressurize && vent.IsFunctional)
                     {
                         // This room must have a breach
-                        breachDetected[ventGroup] = true;
+                        if (breachDetected.ContainsKey(ventGroup)) breachDetected[ventGroup] = true;
                         // Break out of foreach loop to prevent overwrite of breachDetected state
                         break;
                     }
                     // Room doesn't have a breach, reset breachDetected flag
-                    else breachDetected[ventGroup] = false;
+                    else if (breachDetected.ContainsKey(ventGroup)) breachDetected[ventGroup] = false;
                 }
 
                 // If auto-detection is enabled and we found a breach
-                if (breachDetected[ventGroup] && breachDetectionEnabled)
+                if (doorRoomKeys.ContainsKey(ventGroup) && breachDetected.ContainsKey(ventGroup) && breachDetected[ventGroup] && breachDetectionEnabled)
                 {
+                    // Get all doors connecting to this room
+                    List<IMyDoor> doors = new List<IMyDoor>();
+                    doorRoomKeys.TryGetValue(ventGroup, out doors);
                     // Go through each door on grid
-                    foreach (IMyDoor door in allDoors)
+                    foreach (IMyDoor door in doors)
                     {
                         // If this door connects to the breached room, close it to seal the breach off from other rooms
-                        if (doorRoomKeys[door] == ventGroup) door.CloseDoor();
+                        door.CloseDoor();
                     }
+                }
+            }
+
+            if (debug)
+            {
+                Echo("\nBreach status:");
+                foreach (KeyValuePair<IMyBlockGroup, bool> status in breachDetected)
+                {
+                    Echo("\n\t" + status.Key + ":\t" + (status.Value ? "Breach" : "Sealed"));
                 }
             }
 
@@ -459,8 +519,16 @@ namespace IngameScript
 
             // REFRESH WATCHDOG TIMER //
 
-            IMyTimerBlock watchdog = (IMyTimerBlock)GridTerminalSystem.GetBlockWithName("Timer Block - Main Computer WDT");
-            if (watchdogEnabled)
+            List<IMyTimerBlock> timers = new List<IMyTimerBlock>();
+            GridTerminalSystem.GetBlocksOfType<IMyTimerBlock>(timers);
+            IMyTimerBlock watchdog = null;
+            
+            foreach (IMyTimerBlock timer in timers)
+            {
+                if (((IMyTerminalBlock)timer).CustomData.ToLower().Contains("watchdog")) watchdog = timer;
+            }
+            
+            if (watchdogEnabled && watchdog != null)
             {
                 watchdog.Silent = true;
                 watchdog.TriggerDelay = 5; // seconds
@@ -468,6 +536,45 @@ namespace IngameScript
             }
 
             // END REFRESH WATCHDOG TIMER //
+
+
+
+            // AUTO-AIRLOCKS //
+
+            // Dictionary of airlock sequence initialization buttons (key) and their respective airlock rooms/groups (value)
+            Dictionary<IMyButtonPanel, IMyBlockGroup> airlockButtons = new Dictionary<IMyButtonPanel, IMyBlockGroup>();
+
+            // List of all airlock button panel blocks
+            List<IMyButtonPanel> airlockPanels = new List<IMyButtonPanel>();
+            Func<IMyButtonPanel,bool> selectAirlockButtonPanels = panel => panel.CustomData.ToLower().Contains("airlock");
+            GridTerminalSystem.GetBlocksOfType<IMyButtonPanel>(airlockPanels, selectAirlockButtonPanels);
+
+            // Match button panels to airlock rooms/doors
+            foreach (IMyButtonPanel panel in airlockPanels)
+            {
+                string info = panel.CustomData.ToLower();
+                
+                foreach (IMyBlockGroup group in airVentGroups)
+                {
+                    // String of air vent group after removing "Air Vents - " from group name
+                    string ventGroupPrefix = "Air Vents - ";
+                    string roomName = group.Name.Substring(ventGroupPrefix.Length, group.Name.Length - ventGroupPrefix.Length).ToLower();
+
+                    // Compare room names
+                    if (roomName.ToLower().Contains("airlock") && info.Contains(roomName))
+                    {
+                        airlockButtons.Add(panel, group);
+                        break;
+                    }
+                }
+
+                if (actionCall.Contains("airlock"))
+                {
+                    // Add airlock control sequence here
+                }
+            }
+
+            // END AUTO-AIRLOCKS //
         }
         // END OF USER CODE //
     }
