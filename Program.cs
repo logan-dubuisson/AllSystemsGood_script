@@ -50,8 +50,13 @@ namespace IngameScript
 
         struct actionDelay_t
         {
-            string action;
-            long delay;
+            public string actionArg;
+            public long delayTime;
+            public actionDelay_t(string arg, long time)
+            {
+                actionArg = arg;
+                delayTime = time;
+            }
         }
         
         // MY GLOBALS HERE //
@@ -100,9 +105,10 @@ namespace IngameScript
 
             if (delays.Count > 0)
             {
-                foreach (actionDelay_t delay in delays)
+                foreach (actionDelay_t actionDelay in delays)
                 {
-                    // Add delay split here
+                    tokens.Append(actionDelay.actionArg);
+                    tokens.Append(actionDelay.delayTime.ToString());
                 }
             }
 
@@ -143,7 +149,8 @@ namespace IngameScript
                 storedArgument ?? "",
                 ticks.ToString(),
                 sec.ToString(),
-                secF.ToString()
+                secF.ToString(),
+                storeDelays(delayBuffer)
             );
         }
 
@@ -168,6 +175,7 @@ namespace IngameScript
             long storedTicks = 0;
             long storedSec = 0;
             float storedSecF = 0;
+            List<actionDelay_t> storedDelays = new List<actionDelay_t>();
 
             string[] storedData = Storage.Split(';');
             if (storedData.Length > 0)
@@ -176,6 +184,18 @@ namespace IngameScript
                 long.TryParse(storedData[1], out storedTicks);
                 long.TryParse(storedData[2], out storedSec);
                 float.TryParse(storedData[3], out storedSecF);
+                if (storedData[4] == "delaysBegin")
+                {
+                    for (int i = 5; storedData[i] != "delaysEnd"; i = i + 2)
+                    {
+                        long thisDelayTime = 0;
+                        if (long.TryParse(storedData[i+1], out thisDelayTime))
+                        {
+                            actionDelay_t thisDelay = new actionDelay_t(storedData[i], thisDelayTime);
+                            storedDelays.Add(thisDelay);
+                        }
+                    }
+                }
             }
             else
             {
@@ -183,6 +203,7 @@ namespace IngameScript
                 storedTicks = 0;
                 storedSec = 0;
                 storedSecF = 0f;
+                storedDelays = null;
             }
 
             // Argument Handler //
