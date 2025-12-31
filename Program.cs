@@ -895,7 +895,52 @@ namespace IngameScript
             return true;
         }
 
+        bool cleanupBuffer()
+        {
+            // Debug delay buffer
+            if (debug)
+            {
+                bool hasDebugDelay = false;
+                foreach (actionDelay_t delay in delayBuffer)
+                {
+                    if (delay.actionArg == "debugDelay") hasDebugDelay = true;
+                }
+                
+                Echo("\nDelay Buffer: " + (hasDebugDelay ? "OPERATIONAL" : "COMPROMISED"));
+                if (!hasDebugDelay) addDelay(new actionDelay_t("debugDelay", 1), ref delayBuffer);
+            }
+
+            // Ensure buffer is sorted
+            delayBuffer.Sort(compareDelays);
+            if (debug) Echo("Number of active delays: " + delayBuffer.Count());
+
+            // Check for missed actions in buffer
+            // for (int i = 0; i < delayBuffer.Count; i++)
+            // {
+            //     // if (delayBuffer[i].delayTime == 0) Echo("ERROR: ACTION \"" + delayBuffer[i].actionArg + "\" FAILED TO EXECUTE");
+            //     // else delayBuffer[i] = new actionDelay_t(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
+            //     delayBuffer[i].delayTime = 1;
+            //     delayBuffer[i] = new actionDelay_t(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
+            // }
+            foreach (actionDelay_t delay in delayBuffer)
+            {
+                delay.Tick();
+            }
+
+            return true;
+        }
+
         // END FEATURE FUNCTIONS //
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -971,7 +1016,10 @@ namespace IngameScript
                     {
                         string[] delayArgs = str.Split(',');
                         ulong thisDelayTime = 0;
-                        if (delayArgs[0].Length > 0 && ulong.TryParse(delayArgs[1], out thisDelayTime)) addDelay(new actionDelay_t(delayArgs[0], thisDelayTime), ref storedDelays);
+                        if (delayArgs.Length == 2)
+                        {
+                            if (delayArgs[0].Length > 0 && ulong.TryParse(delayArgs[1], out thisDelayTime)) addDelay(new actionDelay_t(delayArgs[0], thisDelayTime), ref storedDelays);
+                        }
                     }
                 }
                 storedDelays.Sort(compareDelays);
@@ -992,72 +1040,6 @@ namespace IngameScript
 
             // Argument Handler //
             argHandler(argument, updateSource);
-            // string actionCall = "";
-            // if (updateSource == UpdateType.Trigger && argument.Length > 0 && argument.ToLower().Contains("action:"))
-            // {
-            //     actionCall = argument.Substring("action:".Length, argument.Length - "action:".Length);
-            // }
-            // else if (argument.Length > 0)
-            // {
-            //     storedArgument = argument;
-            //     string[] args = argument.Split(' ');
-
-            //     foreach (string arg in args)
-            //     {
-            //         switch(arg)
-            //         {
-            //             case "debug":
-            //                 debug = true;
-            //                 break;
-            //             case "powerManagerDisabled":
-            //                 powerManagerEnabled = false;
-            //                 break;
-            //             case "breachDetectionDisabled":
-            //                 breachDetectionEnabled = false;
-            //                 break;
-            //             case "watchdogDisabled":
-            //                 watchdogEnabled = false;
-            //                 break;
-            //             case "autoAirlocksDisabled":
-            //                 autoAirlocksEnabled = false;
-            //                 break;
-            //             case "closeDoorsDisabled":
-            //                 closeDoorsEnabled = false;
-            //                 break;
-            //             default:
-            //                 break;
-            //         }
-            //     }
-            // } else if (storedArgument != ""){
-            //     string[] args = storedArgument.Split(' ');
-
-            //     foreach (string arg in args)
-            //     {
-            //         switch(arg)
-            //         {
-            //             case "debug":
-            //                 debug = true;
-            //                 break;
-            //             case "powerManagerDisabled":
-            //                 powerManagerEnabled = false;
-            //                 break;
-            //             case "breachDetectionDisabled":
-            //                 breachDetectionEnabled = false;
-            //                 break;
-            //             case "watchdogDisabled":
-            //                 watchdogEnabled = false;
-            //                 break;
-            //             case "autoAirlocksDisabled":
-            //                 autoAirlocksEnabled = false;
-            //                 break;
-            //             case "closeDoorsDisabled":
-            //                 closeDoorsEnabled = false;
-            //                 break;
-            //             default:
-            //                 break;
-            //         }
-            //     }
-            // }
 
             // Core Debug //
             Echo(Me.CustomName);
@@ -1125,125 +1107,12 @@ namespace IngameScript
 
 
             // POWER MANAGEMENT //
+
             powerManagement(allTerminalBlocks, monitorKeys);
 
-            // // POWER CONSUMPTION //
-            
-            // float powerConsumed = 0; // Power consumption in megawatts
-
-            // foreach (IMyTerminalBlock block in allTerminalBlocks)
-            // {
-            //     float powerConsumedBlock = 0f;
-            //     char[] separators = {'\n','\t',':'};
-            //     string[] tokens = block.DetailedInfo.Split(separators);
-            //     string tokenLast = "";
-            //     foreach (string token in tokens)
-            //     {
-            //         if (float.TryParse(token, out powerConsumedBlock) && String.Compare(tokenLast.Trim(),"Required Input") == 0)
-            //         {
-            //             powerConsumed += powerConsumedBlock;
-            //             break;
-            //         }
-            //     }
-            // }
-
-            // // END POWER CONSUMPTION //
+            // END POWER MANAGEMENT //
 
 
-
-            // // SOLAR PANELS //
-
-            // List<IMySolarPanel> solarPanels = new List<IMySolarPanel>();
-            // GridTerminalSystem.GetBlocksOfType<IMySolarPanel>(solarPanels);
-
-            // float solarPanelsOutput = 0f;
-            // foreach (IMySolarPanel solarPanel in solarPanels)
-            // {
-            //     solarPanelsOutput = solarPanel.CurrentOutput;
-            // }
-
-            // // END SOLAR PANELS //
-
-
-
-            // // BATTERIES CONTROL //
-
-            // List<IMyBatteryBlock> batteries = new List<IMyBatteryBlock>();
-            // GridTerminalSystem.GetBlocksOfType<IMyBatteryBlock>(batteries);
-
-            // float batteriesStoredPower = 0f;
-            // float batteriesOutput = 0f;
-            // foreach (IMyBatteryBlock battery in batteries)
-            // {
-            //     batteriesStoredPower += battery.CurrentStoredPower;
-            //     batteriesOutput += battery.CurrentOutput;
-            // }
-
-            // // END BATTERIES CONTROL //
-
-
-
-            // // REACTOR CONTROL //
-
-            // List<IMyReactor> reactors = new List<IMyReactor>();
-            // GridTerminalSystem.GetBlocksOfType<IMyReactor>(reactors);
-
-            // float minTimeForBackup = 6f; // Hours
-            // if (powerManagerEnabled)
-            // {
-            //     if ((batteriesStoredPower / batteriesOutput) < minTimeForBackup || (solarPanelsOutput + batteriesOutput) <= powerConsumed)
-            //     {
-            //         foreach (IMyReactor reactor in reactors)
-            //         {
-            //             reactor.Enabled = true;
-            //         }
-            //     } else if (powerManagerEnabled) {
-            //         foreach (IMyReactor reactor in reactors)
-            //         {
-            //             reactor.Enabled = false;
-            //         }
-            //     } else {
-            //         // Don't manage reactor power
-            //     }
-            // }
-
-            // // END REACTOR CONTROL //
-
-
-
-            // // REACTOR MONITORING //
-
-            // foreach (IMyReactor reactor in reactors)
-            // {
-            //     IMyTextSurface reactor_monitor; //monitorKeys[(IMyTerminalBlock)reactor];
-            //     if (!monitorKeys.TryGetValue((IMyTerminalBlock)reactor, out reactor_monitor)) continue;
-            //     reactor_monitor.ContentType = (ContentType)(1);
-            //     reactor_monitor.FontColor = green;
-            //     reactor_monitor.FontSize = 1.25f;
-                
-            //     reactor_monitor.WriteText("Status: " + (reactor.Enabled ? "ON" : "OFF"), false);
-            //     if (reactor.Enabled == true)
-            //     {
-            //         reactor_monitor.WriteText("\nCurrent Output: " + ((reactor.CurrentOutput < 1f) ? ((reactor.CurrentOutput * 1000).ToString("0.0") + " kW") : ((reactor.CurrentOutput).ToString("0.000") + " MW")), true);
-
-            //         string loadGraphic = "";
-            //         for (int i = 0; i < 15; i++)
-            //         {
-            //             if (i * 20 < reactor.CurrentOutput)
-            //             {
-            //                 loadGraphic += "+";
-            //             } else {
-            //                 loadGraphic += "=";
-            //             }
-            //         }
-
-            //         reactor_monitor.WriteText("\nLoad: [" + loadGraphic + "]", true);
-            //     } else {
-            //         // "Status: OFF", no further text
-            //     }
-            // }
-
-            // // END REACTOR MONITORING //
 
             // Room-Doors key-value pairs
             Dictionary<IMyBlockGroup, List<IMyDoor>> doorRoomKeys = new Dictionary<IMyBlockGroup, List<IMyDoor>>();
@@ -1285,102 +1154,11 @@ namespace IngameScript
                 doorRoomKeys.Add(group, inRoom);
             }
 
+
+
             // HULL BREACH PROTOCOLS //
 
             breachDetection(airVentGroups, doorRoomKeys);
-            // // Room-Doors key-value pairs
-            // Dictionary<IMyBlockGroup, List<IMyDoor>> doorRoomKeys = new Dictionary<IMyBlockGroup, List<IMyDoor>>();
-
-            // // List of all doors on grid
-            // List<IMyDoor> allDoors = new List<IMyDoor>();
-            // GridTerminalSystem.GetBlocksOfType<IMyDoor>(allDoors);
-
-            // // List of all groups containing the string "Air Vents"
-            // List<IMyBlockGroup> airVentGroups = new List<IMyBlockGroup>();
-            // Func<IMyBlockGroup, bool> checkIfVentGroup = group => group.Name.ToLower().Contains("air vents");
-            // GridTerminalSystem.GetBlockGroups(airVentGroups, checkIfVentGroup);
-            
-            // if (debug) Echo("\n\nRooms found:");
-
-            // int groupCount = 0;
-            // foreach (IMyBlockGroup group in airVentGroups)
-            // {
-            //     groupCount++;
-            //     // String of air vent group after removing prefix from group name
-            //     string roomName = group.Name.Substring(ventGroupPrefix.Length, group.Name.Length - ventGroupPrefix.Length);
-
-            //     if (debug) Echo("  " + groupCount + ") " + roomName);
-
-            //     // List of doors connecting to this room
-            //     List<IMyDoor> inRoom = new List<IMyDoor>();
-
-            //     // Add this door to inRoom list if room is listed in CustomData of door
-            //     foreach (IMyDoor door in allDoors)
-            //     {
-            //         if (((IMyTerminalBlock)door).CustomData.ToLower().Contains(roomName))
-            //         {
-            //             inRoom.Add(door);
-            //         }
-            //         // If no room name is found, we ignore this door
-            //     }
-
-            //     // Add key (vent group) with value inRoom (list of doors connecting room)
-            //     doorRoomKeys.Add(group, inRoom);
-            // }
-
-            // if (breachDetectionEnabled)
-            // {
-            //     // Room keys (air vent group) with breach status value
-            //     Dictionary<IMyBlockGroup,bool> breachDetected = new Dictionary<IMyBlockGroup,bool>();
-
-            //     // Check each room (vent group)
-            //     foreach (IMyBlockGroup ventGroup in airVentGroups)
-            //     {
-            //         // Add each vent group to breachDetected dictionary
-            //         breachDetected.Add(ventGroup, false);
-            //         // List of vents in this room
-            //         List<IMyAirVent> groupVents = new List<IMyAirVent>();
-            //         ventGroup.GetBlocksOfType<IMyAirVent>(groupVents);
-
-            //         // Check each vent in group for a breach
-            //         foreach (IMyAirVent vent in groupVents)
-            //         {
-            //             // Breach conditions: Can't pressurize room (leak), attempting pressurization (unintentional depressurization), and block is functional (not WIP in an incomplete room/area)
-            //             if (!vent.CanPressurize && !vent.Depressurize && vent.IsFunctional)
-            //             {
-            //                 // This room must have a breach
-            //                 if (breachDetected.ContainsKey(ventGroup)) breachDetected[ventGroup] = true;
-            //                 // Break out of foreach loop to prevent overwrite of breachDetected state
-            //                 break;
-            //             }
-            //             // Room doesn't have a breach, reset breachDetected flag
-            //             else if (breachDetected.ContainsKey(ventGroup)) breachDetected[ventGroup] = false;
-            //         }
-
-            //         // If we found a breach
-            //         if (doorRoomKeys.ContainsKey(ventGroup) && breachDetected.ContainsKey(ventGroup) && breachDetected[ventGroup])
-            //         {
-            //             // Get all doors connecting to this room
-            //             List<IMyDoor> doors = new List<IMyDoor>();
-            //             doorRoomKeys.TryGetValue(ventGroup, out doors);
-            //             // Go through each door on grid
-            //             foreach (IMyDoor door in doors)
-            //             {
-            //                 // If this door connects to the breached room, close it to seal the breach off from other rooms
-            //                 door.CloseDoor();
-            //             }
-            //         }
-            //     }
-
-            //     if (debug)
-            //     {
-            //         Echo("\nBreach status:");
-            //         foreach (KeyValuePair<IMyBlockGroup, bool> status in breachDetected)
-            //         {
-            //             Echo("  - " + status.Key.ToString().Split('-')[1].Trim() + ": " + (status.Value ? "Breach" : "Sealed"));
-            //         }
-            //     }
-            // }
 
             // END HULL BREACH PROTOCOLS //
 
@@ -1389,24 +1167,6 @@ namespace IngameScript
             // REFRESH WATCHDOG TIMER //
 
             watchdogTimer();
-            // List<IMyTimerBlock> timers = new List<IMyTimerBlock>();
-            // GridTerminalSystem.GetBlocksOfType<IMyTimerBlock>(timers);
-            // IMyTimerBlock watchdog = null;
-            
-            // if (watchdogEnabled)
-            // {
-            //     foreach (IMyTimerBlock timer in timers)
-            //     {
-            //         if (((IMyTerminalBlock)timer).CustomData.ToLower().Contains("watchdog:" + Me.CustomName.ToLower())) watchdog = timer;
-            //     }
-                
-            //     if (watchdogEnabled && watchdog != null)
-            //     {
-            //         watchdog.Silent = true;
-            //         watchdog.TriggerDelay = 5; // seconds
-            //         watchdog.StartCountdown(); // Resets WDT each tick
-            //     }
-            // }
 
             // END REFRESH WATCHDOG TIMER //
 
@@ -1415,263 +1175,6 @@ namespace IngameScript
             // AUTO-AIRLOCKS //
 
             autoAirlocks(airVentGroups, doorRoomKeys);
-            // if (autoAirlocksEnabled)
-            // {
-            //     List<actionDelay_t> removeList = new List<actionDelay_t>();
-
-            //     // If we've hit a button calling the Auto-Airlock action, add to buffer with no delay
-            //     if (actionCall.Contains("Auto-Airlocks:")) addDelay(new actionDelay_t(actionCall, 0), ref delayBuffer);
-                
-            //     // Checks each group if active airlock and continues/starts cycle if so
-            //     foreach (actionDelay_t delay in delayBuffer)
-            //     {
-            //         string room = "";
-            //         AirlockStatus status = AirlockStatus.INACTIVE;
-            //         if (delay.actionArg.Contains("Auto-Airlocks:") && delay.delayTime == 0)
-            //         {
-            //             // Get arguments pairs in call
-            //             string[] actionArgs = delay.actionArg.Split(majorDelim);
-            //             foreach (string arg in actionArgs)
-            //             {
-            //                 // Split argument commands from parameters
-            //                 string[] tokens = arg.Split(minorDelim);
-            //                 // If the argument is missing parameters or empty
-            //                 if (tokens.Length <= 1 && !arg.Contains("Auto-Airlocks"))
-            //                 {
-            //                     // Error noted and cancel behavior
-            //                     status = AirlockStatus.ERROR;
-            //                     break;
-            //                 }
-            //                 // Else, parse commands
-            //                 switch(tokens[0].ToLower())
-            //                 {
-            //                     // Sets airlock room to be cycled
-            //                     case "room":
-            //                         room = tokens[1].ToLower();
-            //                         break;
-            //                     // Determines direction (going into or coming out of pressurized side) and state of cycle
-            //                     case "state":
-            //                         switch(tokens[1].ToLower())
-            //                         {
-            //                             case "ext_start":
-            //                                 status = AirlockStatus.ACTIVE_IN_START;
-            //                                 break;
-            //                             case "int_start":
-            //                                 status = AirlockStatus.ACTIVE_OUT_START;
-            //                                 break;
-            //                             case "ext_seal":
-            //                                 status = AirlockStatus.ACTIVE_IN_SEAL;
-            //                                 break;
-            //                             case "int_seal":
-            //                                 status = AirlockStatus.ACTIVE_OUT_SEAL;
-            //                                 break;
-            //                             case "ext_press":
-            //                                 status = AirlockStatus.ACTIVE_IN_PRESS;
-            //                                 break;
-            //                             case "int_depress":
-            //                                 status = AirlockStatus.ACTIVE_OUT_DEPRESS;
-            //                                 break;
-            //                             case "ext_end":
-            //                                 status = AirlockStatus.ACTIVE_IN_END;
-            //                                 break;
-            //                             case "int_end":
-            //                                 status = AirlockStatus.ACTIVE_OUT_END;
-            //                                 break;
-            //                             default:
-            //                                 break;
-            //                         }
-            //                         break;
-            //                     // If no valid command found, error is noted
-            //                     default:
-            //                         status = AirlockStatus.ERROR;
-            //                         break;
-            //                 }
-            //             }
-            //         }
-
-            //         // Check if all O2 tanks are full to allow exception in cycling if can't depressurize
-            //         List<IMyGasTank> o2Tanks = new List<IMyGasTank>();
-            //         GridTerminalSystem.GetBlocksOfType<IMyGasTank>(o2Tanks);
-            //         float emptyO2Capacity = 0f;
-            //         foreach (IMyGasTank tank in o2Tanks)
-            //         {
-            //             string type = tank.DetailedInfo.Split('\n')[0].Split(':')[1].Trim();
-            //             if (type.Contains("Oxygen"))
-            //             {
-            //                 emptyO2Capacity += (float)(1 - tank.FilledRatio) * tank.Capacity;
-            //             }
-            //             // else o2Tanks.Remove(tank);
-            //         }
-
-            //         foreach (IMyBlockGroup group in airVentGroups)
-            //         {
-            //             string roomName = group.Name.Substring(ventGroupPrefix.Length, group.Name.Length - ventGroupPrefix.Length).ToLower();
-            //             if (delay.actionArg.ToLower().Contains(roomName))
-            //             {
-            //                 List<IMyDoor> doors = new List<IMyDoor>();
-            //                 List<IMyDoor> intDoors = new List<IMyDoor>();
-            //                 List<IMyDoor> extDoors = new List<IMyDoor>();
-            //                 // Get interior and exterior doors lists
-            //                 if (doorRoomKeys.TryGetValue(group, out doors))
-            //                 {
-            //                     foreach (IMyDoor door in doors)
-            //                     {
-            //                         if (door.CustomData.ToLower().Contains("exterior")) extDoors.Add(door);
-            //                         else if (door.CustomData.ToLower().Contains(roomName)) intDoors.Add(door);
-            //                     }
-            //                 }
-
-            //                 List<IMyTerminalBlock> vents = new List<IMyTerminalBlock>();
-            //                 group.GetBlocks(vents);
-            //                 bool ready = true;
-            //                 // State-based action in cycle
-            //                 switch(status)
-            //                 {
-            //                     case AirlockStatus.ACTIVE_IN_START:
-            //                         foreach (IMyDoor intDoor in intDoors)
-            //                         {
-            //                             if (!intDoor.Closed)
-            //                             {
-            //                                 intDoor.CloseDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (!ready) break;
-            //                         foreach (IMyDoor extDoor in extDoors)
-            //                         {
-            //                             if (extDoor.OpenRatio < 1)
-            //                             {
-            //                                 extDoor.OpenDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             addDelay(new actionDelay_t(delay.actionArg.Replace("ext_start", "ext_seal"), airlockDoorDelayTime), ref delayBuffer);
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_OUT_START:
-            //                         foreach (IMyDoor extDoor in extDoors)
-            //                         {
-            //                             if (!extDoor.Closed)
-            //                             {
-            //                                 extDoor.CloseDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (!ready) break;
-            //                         foreach (IMyDoor intDoor in intDoors)
-            //                         {
-            //                             if (intDoor.OpenRatio < 1)
-            //                             {
-            //                                 intDoor.OpenDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             addDelay(new actionDelay_t(delay.actionArg.Replace("int_start", "int_seal"), airlockDoorDelayTime), ref delayBuffer);
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_IN_SEAL:
-            //                         foreach (IMyDoor door in extDoors)
-            //                         {
-            //                             if (!door.Closed)
-            //                             {
-            //                                 door.CloseDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             addDelay(new actionDelay_t(delay.actionArg.Replace("ext_seal", "ext_press"), 0), ref delayBuffer);
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_OUT_SEAL:
-            //                         foreach (IMyDoor door in intDoors)
-            //                         {
-            //                             if (!door.Closed)
-            //                             {
-            //                                 door.CloseDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             addDelay(new actionDelay_t(delay.actionArg.Replace("int_seal", "int_depress"), 0), ref delayBuffer);
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_IN_PRESS:
-            //                         foreach (IMyAirVent vent in vents)
-            //                         {
-            //                             vent.Depressurize = false;
-            //                             if (vent.Status == VentStatus.Depressurized)
-            //                             {
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             addDelay(new actionDelay_t(delay.actionArg.Replace("ext_press", "ext_end"), 0), ref delayBuffer);
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_OUT_DEPRESS:
-            //                         foreach (IMyAirVent vent in vents)
-            //                         {
-            //                             vent.Depressurize = true;
-            //                             if (vent.Status != VentStatus.Depressurized && emptyO2Capacity > 0)
-            //                             {
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             addDelay(new actionDelay_t(delay.actionArg.Replace("int_depress", "int_end"), 0), ref delayBuffer);
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_IN_END:
-            //                         foreach (IMyDoor door in intDoors)
-            //                         {
-            //                             if (door.Closed)
-            //                             {
-            //                                 door.OpenDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     case AirlockStatus.ACTIVE_OUT_END:
-            //                         foreach (IMyDoor door in extDoors)
-            //                         {
-            //                             if (door.Closed)
-            //                             {
-            //                                 door.OpenDoor();
-            //                                 ready = false;
-            //                             }
-            //                         }
-            //                         if (ready)
-            //                         {
-            //                             removeList.Add(delay);
-            //                         }
-            //                         break;
-            //                     default:
-            //                         break;
-            //                 }
-            //             }
-            //         }
-            //     }
-
-            //     removeDelayList(removeList, ref delayBuffer);
-            // }
 
             // END AUTO-AIRLOCKS //
 
@@ -1682,55 +1185,6 @@ namespace IngameScript
             // CLOSE DOORS //
 
             closeDoors(allDoors);
-            // if (closeDoorsEnabled)
-            // {
-            //     List<actionDelay_t> removeList = new List<actionDelay_t>();
-            //     // Check each door
-            //     foreach (IMyDoor door in allDoors)
-            //     {
-            //         // State: whether door needs to be closed NOW
-            //         bool needsClosing = false;
-            //         // State: whether closing action is already queued
-            //         bool isQueued = false;
-
-            //         // If not a hangar door and not excluded via CustomData tag
-            //         if (!door.CustomName.ToLower().Contains("hangar door") && !door.CustomData.ToLower().Contains("doorclosing=off"))
-            //         {
-            //             // If open, this door will need to be closed
-            //             if (door.OpenRatio == 1) needsClosing = true;
-            //             // Check if we've already queued a closing action
-            //             foreach (actionDelay_t actionDelay in delayBuffer)
-            //             {
-            //                 // If we have already queued a closing action
-            //                 if (actionDelay.actionArg.ToLower().Contains(door.ToString().ToLower()))
-            //                 {
-            //                     isQueued = true;
-            //                     // And it's not set for NOW
-            //                     if (actionDelay.delayTime > 0 && needsClosing)
-            //                     {
-            //                         // Don't close yet
-            //                         needsClosing = false;
-            //                     }
-            //                     // But if it is set for NOW, remove the action from buffer
-            //                     else
-            //                     {
-            //                         removeList.Add(actionDelay);
-            //                     }
-            //                     break;
-            //                 }
-            //             }
-
-            //             // If a needed closing action is not yet queued, add it to the buffer
-            //             if (!isQueued) addDelay(new actionDelay_t("closeDoor:" + door.ToString(), closeDoorsTime), ref delayBuffer);
-
-            //             // If we've determined that this door should be closed, do so now
-            //             else if (needsClosing) door.CloseDoor();
-
-            //             // NOTE: If door is closed BEFORE closing delay expires, then needsClosing == false
-            //         }
-            //     }
-            //     removeDelayList(removeList, ref delayBuffer);
-            // }
 
             // END CLOSE DOORS //
 
@@ -1740,35 +1194,7 @@ namespace IngameScript
 
             // DELAY BUFFER CLEANUP & DEBUG //
 
-            // Debug delay buffer
-            if (debug)
-            {
-                bool hasDebugDelay = false;
-                foreach (actionDelay_t delay in delayBuffer)
-                {
-                    if (delay.actionArg == "debugDelay") hasDebugDelay = true;
-                }
-                
-                Echo("\nDelay Buffer: " + (hasDebugDelay ? "OPERATIONAL" : "COMPROMISED"));
-                if (!hasDebugDelay) addDelay(new actionDelay_t("debugDelay", 1), ref delayBuffer);
-            }
-
-            // Ensure buffer is sorted
-            delayBuffer.Sort(compareDelays);
-            if (debug) Echo("Number of active delays: " + delayBuffer.Count());
-
-            // Check for missed actions in buffer
-            // for (int i = 0; i < delayBuffer.Count; i++)
-            // {
-            //     // if (delayBuffer[i].delayTime == 0) Echo("ERROR: ACTION \"" + delayBuffer[i].actionArg + "\" FAILED TO EXECUTE");
-            //     // else delayBuffer[i] = new actionDelay_t(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
-            //     delayBuffer[i].delayTime = 1;
-            //     delayBuffer[i] = new actionDelay_t(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
-            // }
-            foreach (actionDelay_t delay in delayBuffer)
-            {
-                delay.Tick();
-            }
+            cleanupBuffer();
 
             // END BUFFER CLEANUP & DEBUG //
         }
