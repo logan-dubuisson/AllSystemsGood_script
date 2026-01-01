@@ -31,6 +31,7 @@ using VRage.Game.ObjectBuilders.Definitions;
 using VRage.Network;
 using VRage.Scripting.MemorySafeTypes;
 using VRageMath;
+using VRageRender.Utils;
 
 namespace IngameScript
 {
@@ -57,8 +58,8 @@ namespace IngameScript
         // Number of seconds before any fully opened, non-hangar doors will automatically close (default: 10 seconds)
         ulong closeDoorsTime = 10;
 
-        // Number of seconds before fully opened airlock doors will close during the Auto-Airlock cycle (default: 3 seconds)
-        ulong airlockDoorDelayTime = 3;
+        // Number of seconds before fully opened airlock doors will close during the Auto-Airlock cycle (default: 5 seconds)
+        ulong airlockDoorDelayTime = 5;
         // Prefix for any air vent groups on the grid
         string ventGroupPrefix = "Air Vents - ";
 
@@ -70,7 +71,7 @@ namespace IngameScript
 
         const ulong ticksPerRun = 5;
         const ulong ticksPerSec = 60;
-        const double secToRuns = (double)ticksPerSec / (double)ticksPerRun;
+        const double secToRuns = (double)ticksPerSec;// / (double)ticksPerRun;
         const double msPerRun = (1000d / ticksPerSec) * ticksPerRun;
 
         // END TIME-KEEPING SETTINGS //
@@ -79,18 +80,21 @@ namespace IngameScript
 
         // CUSTOM TYPES //
 
-        struct actionDelay_t
+        public class ActionDelay
         {
             public string actionArg;
             public ulong delayTime;
             public bool Tick()
             {
-                return delayTime > --delayTime;
+                if (delayTime == 0) return false;
+                ulong oldTime = delayTime;
+                --delayTime;
+                return oldTime > delayTime;
             }
-            public actionDelay_t(string arg, float timeInSec)
+            public ActionDelay(string arg, double timeInSec)
             {
                 actionArg = arg;
-                delayTime = (ulong)Math.Ceiling(timeInSec * secToRuns);
+                delayTime = (ulong)(timeInSec * secToRuns);
             }
         }
 
@@ -163,7 +167,7 @@ namespace IngameScript
         ulong ticks = 0;
         ulong sec = 0;
         float secF = 0f;
-        List<actionDelay_t> delayBuffer = new List<actionDelay_t>();
+        List<ActionDelay> delayBuffer = new List<ActionDelay>();
         string actionCall = "";
         List<Room> rooms = new List<Room>();
         bool debug = false;
@@ -206,21 +210,21 @@ namespace IngameScript
             return keyMap;
         }
 
-        int compareDelays(actionDelay_t delay1, actionDelay_t delay2)
+        int compareDelays(ActionDelay delay1, ActionDelay delay2)
         {
             return delay1.delayTime.CompareTo(delay2.delayTime);
         }
 
-        bool addDelay(actionDelay_t newAction, ref List<actionDelay_t> delays)
+        bool addDelay(ActionDelay newAction, ref List<ActionDelay> delays)
         {
-            List<actionDelay_t> newDelays = new List<actionDelay_t>(delays);
+            List<ActionDelay> newDelays = new List<ActionDelay>(delays);
             // bool atEnd = false;
 
             // if (newDelays.Count == 0) newDelays.Add(newAction);
             // else
             // {
-            //     actionDelay_t indexToAdd = newDelays.First();
-            //     foreach (actionDelay_t action in newDelays)
+            //     ActionDelay indexToAdd = newDelays.First();
+            //     foreach (ActionDelay action in newDelays)
             //     {
             //         if (newAction.delayTime < action.delayTime)
             //         {
@@ -249,10 +253,10 @@ namespace IngameScript
             return false;
         }
 
-        bool addDelaysList(List<actionDelay_t> newActions, ref List<actionDelay_t> delays)
+        bool addDelaysList(List<ActionDelay> newActions, ref List<ActionDelay> delays)
         {
             bool status = true;
-            foreach (actionDelay_t delay in newActions)
+            foreach (ActionDelay delay in newActions)
             {
                 addDelay(delay, ref delays);
                 if (!delays.Contains(delay)) status = false;
@@ -260,10 +264,10 @@ namespace IngameScript
             return status;
         }
 
-        bool removeDelayList(List<actionDelay_t> oldActions, ref List<actionDelay_t> delays)
+        bool removeDelayList(List<ActionDelay> oldActions, ref List<ActionDelay> delays)
         {
             bool status = true;
-            foreach (actionDelay_t delay in oldActions)
+            foreach (ActionDelay delay in oldActions)
             {
                 if (delays.Contains(delay)) delays.Remove(delay);
                 if (delays.Contains(delay)) status = false;
@@ -271,13 +275,13 @@ namespace IngameScript
             return status;
         }
 
-        string storeDelays(List<actionDelay_t> delays)
+        string storeDelays(List<ActionDelay> delays)
         {
             string tokens = "delaysBegin";
 
             if (delays.Count > 0)
             {
-                foreach (actionDelay_t actionDelay in delays) tokens += ":" + actionDelay.actionArg + ',' + actionDelay.delayTime.ToString() + ":";
+                foreach (ActionDelay actionDelay in delays) tokens += ":" + actionDelay.actionArg + ',' + actionDelay.delayTime.ToString() + ":";
             }
             else tokens += ":";
 
@@ -579,17 +583,17 @@ namespace IngameScript
             return true;
         }
 
-        bool autoAirlocks(List<IMyBlockGroup> airVentGroups, Dictionary<IMyBlockGroup,List<IMyDoor>> doorRoomKeys)
+        bool autoAirlocks(List<IMyBlockGroup> airVentGroups, Dictionary<IMyBlockGroup,List<IMyDoor>> doorRoomKeys, ref List<ActionDelay> delayBuffer)
         {
             if (autoAirlocksEnabled)
             {
-                List<actionDelay_t> removeList = new List<actionDelay_t>();
+                List<ActionDelay> removeList = new List<ActionDelay>();
 
                 // If we've hit a button calling the Auto-Airlock action, add to buffer with no delay
-                if (actionCall.Contains("Auto-Airlocks:")) addDelay(new actionDelay_t(actionCall, 0), ref delayBuffer);
+                if (actionCall.Contains("Auto-Airlocks:")) addDelay(new ActionDelay(actionCall, 0), ref delayBuffer);
                 
                 // Checks each group if active airlock and continues/starts cycle if so
-                foreach (actionDelay_t delay in delayBuffer)
+                foreach (ActionDelay delay in delayBuffer)
                 {
                     string room = "";
                     AirlockStatus status = AirlockStatus.INACTIVE;
@@ -713,7 +717,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new actionDelay_t(delay.actionArg.Replace("ext_start", "ext_seal"), airlockDoorDelayTime), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_start", "ext_seal"), airlockDoorDelayTime), ref delayBuffer);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -737,7 +741,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new actionDelay_t(delay.actionArg.Replace("int_start", "int_seal"), airlockDoorDelayTime), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_start", "int_seal"), airlockDoorDelayTime), ref delayBuffer);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -752,7 +756,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new actionDelay_t(delay.actionArg.Replace("ext_seal", "ext_press"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_seal", "ext_press"), 0), ref delayBuffer);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -767,7 +771,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new actionDelay_t(delay.actionArg.Replace("int_seal", "int_depress"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_seal", "int_depress"), 0), ref delayBuffer);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -782,7 +786,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new actionDelay_t(delay.actionArg.Replace("ext_press", "ext_end"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_press", "ext_end"), 0), ref delayBuffer);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -797,7 +801,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new actionDelay_t(delay.actionArg.Replace("int_depress", "int_end"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_depress", "int_end"), 0), ref delayBuffer);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -841,16 +845,16 @@ namespace IngameScript
             return true;
         }
 
-        bool closeDoors(List<IMyDoor> allDoors)
+        bool closeDoors(List<IMyDoor> allDoors, ref List<ActionDelay> delayBuffer)
         {
             if (closeDoorsEnabled)
             {
-                List<actionDelay_t> removeList = new List<actionDelay_t>();
+                List<ActionDelay> removeList = new List<ActionDelay>();
                 // Check each door
                 foreach (IMyDoor door in allDoors)
                 {
                     // State: whether door needs to be closed NOW
-                    bool needsClosing = false;
+                    // bool needsClosing = false;
                     // State: whether closing action is already queued
                     bool isQueued = false;
 
@@ -858,34 +862,51 @@ namespace IngameScript
                     if (!door.CustomName.ToLower().Contains("hangar door") && !door.CustomData.ToLower().Contains("doorclosing=off"))
                     {
                         // If open, this door will need to be closed
-                        if (door.OpenRatio == 1) needsClosing = true;
-                        // Check if we've already queued a closing action
-                        foreach (actionDelay_t actionDelay in delayBuffer)
+                        if (door.OpenRatio == 1)
                         {
-                            // If we have already queued a closing action
-                            if (actionDelay.actionArg.ToLower().Contains(door.ToString().ToLower()))
+                            // needsClosing = true;
+                            // Check if we've already queued a closing action
+                            foreach (ActionDelay actionDelay in delayBuffer)
                             {
-                                isQueued = true;
-                                // And it's not set for NOW
-                                if (actionDelay.delayTime > 0 && needsClosing)
+                                // If we have already queued a closing action
+                                if (actionDelay.actionArg.ToLower().Contains(door.CustomName.ToString().ToLower()))
                                 {
-                                    // Don't close yet
-                                    needsClosing = false;
+                                    isQueued = true;
+                                    if (debug)
+                                    {
+                                        // string[] lines = door.CustomData.Split('\n');
+                                        // if (lines.Length < 2) door.CustomData += "\nClosing in: " + (actionDelay.delayTime / secToRuns).ToString("0.00") + " seconds";
+                                        // else
+                                        // {
+                                        //     lines[1] = "Closing in: " + (actionDelay.delayTime / secToRuns).ToString("0.00") + " seconds";
+                                        //     door.CustomData = String.Join("\n", lines);
+                                        // }
+                                        IMyTextSurface mainMonitor = (IMyTextSurface)Me.GetSurface(0);
+                                        mainMonitor.WriteText("\nClosing " + door.CustomName + " in: " + (actionDelay.delayTime / secToRuns).ToString("0.00") + " seconds", true);
+                                    }
+                                    // And it's not set for NOW
+                                    if (actionDelay.delayTime > 0)
+                                    {
+                                        // Don't close yet
+                                        // needsClosing = false;
+                                    }
+                                    // But if it is set for NOW, remove the action from buffer
+                                    else
+                                    {
+                                        removeList.Add(actionDelay);
+                                        // If we've determined that this door should be closed, do so now
+                                        door.CloseDoor();
+                                    }
+                                    break;
                                 }
-                                // But if it is set for NOW, remove the action from buffer
-                                else
-                                {
-                                    removeList.Add(actionDelay);
-                                }
-                                break;
                             }
+
+                            // If a needed closing action is not yet queued, add it to the buffer
+                            if (!isQueued) addDelay(new ActionDelay("closeDoor:" + door.CustomName.ToString(), closeDoorsTime), ref delayBuffer);
                         }
 
-                        // If a needed closing action is not yet queued, add it to the buffer
-                        if (!isQueued) addDelay(new actionDelay_t("closeDoor:" + door.ToString(), closeDoorsTime), ref delayBuffer);
-
-                        // If we've determined that this door should be closed, do so now
-                        else if (needsClosing) door.CloseDoor();
+                        // // If we've determined that this door should be closed, do so now
+                        // if (needsClosing) door.CloseDoor();
 
                         // NOTE: If door is closed BEFORE closing delay expires, then needsClosing == false
                     }
@@ -895,36 +916,61 @@ namespace IngameScript
             return true;
         }
 
-        bool cleanupBuffer()
+        bool cleanupBuffer(ref List<ActionDelay> delayBuffer)
         {
+            string delayDebugInfo = "";
             // Debug delay buffer
             if (debug)
             {
+                delayDebugInfo = "Delays:";
+                ulong delayCount = 0;
+                ActionDelay debugDelay = null;
                 bool hasDebugDelay = false;
-                foreach (actionDelay_t delay in delayBuffer)
+                foreach (ActionDelay delay in delayBuffer)
                 {
-                    if (delay.actionArg == "debugDelay") hasDebugDelay = true;
+                    delayDebugInfo += "\n"+ ++delayCount + ")\n" + delay.actionArg + "\n" + delay.delayTime + " ticks\n" + ((float)delay.delayTime / secToRuns).ToString("0.00") + " seconds";
+                    if (delay.actionArg == "debugDelay")
+                    {
+                        debugDelay = delay;
+                        hasDebugDelay = true;
+                    }
                 }
                 
                 Echo("\nDelay Buffer: " + (hasDebugDelay ? "OPERATIONAL" : "COMPROMISED"));
-                if (!hasDebugDelay) addDelay(new actionDelay_t("debugDelay", 1), ref delayBuffer);
+                if (!hasDebugDelay) addDelay(new ActionDelay("debugDelay", 1), ref delayBuffer);
+                else if (debugDelay != null && debugDelay.delayTime == 0)
+                {
+                    delayBuffer.Remove(debugDelay);
+                    addDelay(new ActionDelay("debugDelay", 1), ref delayBuffer);
+                }
             }
 
             // Ensure buffer is sorted
             delayBuffer.Sort(compareDelays);
-            if (debug) Echo("Number of active delays: " + delayBuffer.Count());
+
+            if (debug)
+            {
+                Echo("Number of active delays: " + delayBuffer.Count());
+                Echo("\n" + delayDebugInfo);
+            }
 
             // Check for missed actions in buffer
             // for (int i = 0; i < delayBuffer.Count; i++)
             // {
             //     // if (delayBuffer[i].delayTime == 0) Echo("ERROR: ACTION \"" + delayBuffer[i].actionArg + "\" FAILED TO EXECUTE");
-            //     // else delayBuffer[i] = new actionDelay_t(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
+            //     // else delayBuffer[i] = new ActionDelay(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
             //     delayBuffer[i].delayTime = 1;
-            //     delayBuffer[i] = new actionDelay_t(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
+            //     delayBuffer[i] = new ActionDelay(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
             // }
-            foreach (actionDelay_t delay in delayBuffer)
+
+            bool status = true;
+
+            for (int i = 0; i < delayBuffer.Count; i++)
             {
-                delay.Tick();
+                ulong prevTime = delayBuffer[i].delayTime;
+                if (delayBuffer[i].delayTime > 0) --delayBuffer[i].delayTime;
+                status = prevTime > delayBuffer[i].delayTime;
+                if (debug) Echo("\nTick " + delayBuffer[i].actionArg + " " + (status ? "succeeded" : "failed"));
             }
 
             return true;
@@ -999,11 +1045,11 @@ namespace IngameScript
             ulong storedTicks = 0;
             ulong storedSec = 0;
             float storedSecF = 0;
-            List<actionDelay_t> storedDelays = new List<actionDelay_t>();
+            List<ActionDelay> storedDelays = new List<ActionDelay>();
 
             string[] storedData = Storage.Split(';');
             
-            if (storedData.Length >= (int)storedDataLength)
+            if (storedData.Length >= (int)storedDataLength && ticks == 0 && argument.Length == 0)
             {
                 storedArgument = storedData[0];
                 ulong.TryParse(storedData[1], out storedTicks);
@@ -1018,7 +1064,7 @@ namespace IngameScript
                         ulong thisDelayTime = 0;
                         if (delayArgs.Length == 2)
                         {
-                            if (delayArgs[0].Length > 0 && ulong.TryParse(delayArgs[1], out thisDelayTime)) addDelay(new actionDelay_t(delayArgs[0], thisDelayTime), ref storedDelays);
+                            if (delayArgs[0].Length > 0 && ulong.TryParse(delayArgs[1], out thisDelayTime)) addDelay(new ActionDelay(delayArgs[0], thisDelayTime), ref storedDelays);
                         }
                     }
                 }
@@ -1027,7 +1073,7 @@ namespace IngameScript
                 // ticks = storedTicks;
                 // sec = storedSec;
                 // secF = storedSecF;
-                delayBuffer = storedDelays;
+                // delayBuffer = storedDelays;
             }
             else
             {
@@ -1044,8 +1090,8 @@ namespace IngameScript
             // Core Debug //
             Echo(Me.CustomName);
             ticks++;
-            secF = ticks / 60f;
-            sec = ticks / 60;
+            secF = ticks / (float)ticksPerSec;
+            sec = ticks / ticksPerSec;
             if (Runtime.LastRunTimeMs > msPerRun) execTimeExceeded = true;
             if (debug)
             {
@@ -1107,9 +1153,7 @@ namespace IngameScript
 
 
             // POWER MANAGEMENT //
-
             powerManagement(allTerminalBlocks, monitorKeys);
-
             // END POWER MANAGEMENT //
 
 
@@ -1157,46 +1201,32 @@ namespace IngameScript
 
 
             // HULL BREACH PROTOCOLS //
-
             breachDetection(airVentGroups, doorRoomKeys);
-
             // END HULL BREACH PROTOCOLS //
 
 
 
             // REFRESH WATCHDOG TIMER //
-
             watchdogTimer();
-
             // END REFRESH WATCHDOG TIMER //
 
 
 
             // AUTO-AIRLOCKS //
-
-            autoAirlocks(airVentGroups, doorRoomKeys);
-
+            autoAirlocks(airVentGroups, doorRoomKeys, ref delayBuffer);
             // END AUTO-AIRLOCKS //
 
 
 
-
-
             // CLOSE DOORS //
-
-            closeDoors(allDoors);
-
+            closeDoors(allDoors, ref delayBuffer);
             // END CLOSE DOORS //
 
 
-
-
-
             // DELAY BUFFER CLEANUP & DEBUG //
-
-            cleanupBuffer();
-
+            cleanupBuffer(ref delayBuffer);
             // END BUFFER CLEANUP & DEBUG //
+
         }
         // END OF USER CODE //
     }
