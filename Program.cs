@@ -177,8 +177,8 @@ namespace IngameScript
         bool autoAirlocksEnabled = true;
         bool closeDoorsEnabled = true;
         bool execTimeExceeded = false;
-        char[] majorDelim = {':'};
-        char[] minorDelim = {',','\n','\t'};
+        char[] majorDelim = {':','\n'};
+        char[] minorDelim = {',','\t','='};
         VRageMath.Color green = new VRageMath.Color(0, 255, 0);
 
         // END MY GLOBALS //
@@ -309,6 +309,8 @@ namespace IngameScript
             if (updateSource == UpdateType.Trigger && argument.Length > 0 && argument.ToLower().Contains("action:"))
             {
                 actionCall = argument.Substring("action:".Length, argument.Length - "action:".Length);
+                Runtime.UpdateFrequency = (UpdateFrequency)(ticksPerRun);
+                argHandler(storedArgument, UpdateType.Terminal);
                 return true;
             }
             else if (argument.Length > 0)
@@ -379,127 +381,201 @@ namespace IngameScript
             return false;
         }
 
-        bool powerManagement(List<IMyTerminalBlock> allTerminalBlocks, Dictionary<IMyTerminalBlock,IMyTextSurface> monitorKeys)
+        bool powerManagement(List<IMyTerminalBlock> allTerminalBlocks, Dictionary<IMyTerminalBlock,IMyTextSurface> monitorKeys, ref List<ActionDelay> delays)
         {
-            // POWER CONSUMPTION //
-
-            float powerConsumed = 0; // Power consumption in megawatts
-
-            foreach (IMyTerminalBlock block in allTerminalBlocks)
-            {
-                float powerConsumedBlock = 0f;
-                char[] separators = {'\n','\t',':'};
-                string[] tokens = block.DetailedInfo.Split(separators);
-                string tokenLast = "";
-                foreach (string token in tokens)
-                {
-                    if (float.TryParse(token, out powerConsumedBlock) && String.Compare(tokenLast.Trim(),"Required Input") == 0)
-                    {
-                        powerConsumed += powerConsumedBlock;
-                        break;
-                    }
-                }
-            }
-
-            // END POWER CONSUMPTION //
-
-
-
-            // SOLAR PANELS //
-
-            List<IMySolarPanel> solarPanels = new List<IMySolarPanel>();
-            GridTerminalSystem.GetBlocksOfType<IMySolarPanel>(solarPanels);
-
-            float solarPanelsOutput = 0f;
-            foreach (IMySolarPanel solarPanel in solarPanels)
-            {
-                solarPanelsOutput = solarPanel.CurrentOutput;
-            }
-
-            // END SOLAR PANELS //
-
-
-
-            // BATTERIES CONTROL //
-
-            List<IMyBatteryBlock> batteries = new List<IMyBatteryBlock>();
-            GridTerminalSystem.GetBlocksOfType<IMyBatteryBlock>(batteries);
-
-            float batteriesStoredPower = 0f;
-            float batteriesOutput = 0f;
-            foreach (IMyBatteryBlock battery in batteries)
-            {
-                batteriesStoredPower += battery.CurrentStoredPower;
-                batteriesOutput += battery.CurrentOutput;
-            }
-
-            // END BATTERIES CONTROL //
-
-
-
-            // REACTOR CONTROL //
-
-            List<IMyReactor> reactors = new List<IMyReactor>();
-            GridTerminalSystem.GetBlocksOfType<IMyReactor>(reactors);
-
-            float minTimeForBackup = 6f; // Hours
             if (powerManagerEnabled)
             {
+
+                // POWER CONSUMPTION //
+
+                float powerConsumed = 0; // Power consumption in megawatts
+
+                foreach (IMyTerminalBlock block in allTerminalBlocks)
+                {
+                    char[] separators = {'\n','\t',':'};
+                    string[] tokens = block.DetailedInfo.Split(separators);
+                    string tokenLast = "";
+                    foreach (string token in tokens)
+                    {
+                        float powerConsumedBlock = 0f;
+                        if (float.TryParse(token, out powerConsumedBlock) && String.Compare(tokenLast.Trim(),"Required Input") == 0) continue;
+                        else if (token.Trim().ToUpper().Contains("MW"))
+                        {
+                            powerConsumed += powerConsumedBlock;
+                            break;
+                        }
+                        else if (token.Trim().ToUpper().Contains("KW"))
+                        {
+                            powerConsumed += powerConsumedBlock / 1000;
+                        }
+                    }
+                }
+
+                // END POWER CONSUMPTION //
+
+
+
+                // SOLAR PANELS //
+
+                List<IMySolarPanel> solarPanels = new List<IMySolarPanel>();
+                GridTerminalSystem.GetBlocksOfType<IMySolarPanel>(solarPanels);
+
+                float solarPanelsOutput = 0f;
+                foreach (IMySolarPanel solarPanel in solarPanels)
+                {
+                    solarPanelsOutput = solarPanel.CurrentOutput;
+                }
+
+                // END SOLAR PANELS //
+
+
+
+                // BATTERIES CONTROL //
+
+                List<IMyBatteryBlock> batteries = new List<IMyBatteryBlock>();
+                GridTerminalSystem.GetBlocksOfType<IMyBatteryBlock>(batteries);
+
+                float batteriesStoredPower = 0f;
+                float batteriesOutput = 0f;
+                foreach (IMyBatteryBlock battery in batteries)
+                {
+                    batteriesStoredPower += battery.CurrentStoredPower;
+                    batteriesOutput += battery.CurrentOutput;
+                }
+
+                // END BATTERIES CONTROL //
+
+
+
+                // REACTOR CONTROL //
+
+                List<IMyReactor> reactors = new List<IMyReactor>();
+                GridTerminalSystem.GetBlocksOfType<IMyReactor>(reactors);
+
+                float minTimeForBackup = 6f; // Hours
+
                 if ((batteriesStoredPower / batteriesOutput) < minTimeForBackup || (solarPanelsOutput + batteriesOutput) <= powerConsumed)
                 {
                     foreach (IMyReactor reactor in reactors)
                     {
                         reactor.Enabled = true;
                     }
-                } else if (powerManagerEnabled) {
+                }
+                else
+                {
                     foreach (IMyReactor reactor in reactors)
                     {
                         reactor.Enabled = false;
                     }
-                } else {
-                    // Don't manage reactor power
                 }
-            }
 
-            // END REACTOR CONTROL //
-
+                // END REACTOR CONTROL //
 
 
-            // REACTOR MONITORING //
 
-            foreach (IMyReactor reactor in reactors)
-            {
-                IMyTextSurface reactor_monitor; //monitorKeys[(IMyTerminalBlock)reactor];
-                if (!monitorKeys.TryGetValue((IMyTerminalBlock)reactor, out reactor_monitor)) continue;
-                reactor_monitor.ContentType = (ContentType)(1);
-                reactor_monitor.FontColor = green;
-                reactor_monitor.FontSize = 1.25f;
-                
-                reactor_monitor.WriteText("Status: " + (reactor.Enabled ? "ON" : "OFF"), false);
-                if (reactor.Enabled == true)
+                // REACTOR MONITORING //
+
+                foreach (IMyReactor reactor in reactors)
                 {
-                    reactor_monitor.WriteText("\nCurrent Output: " + ((reactor.CurrentOutput < 1f) ? ((reactor.CurrentOutput * 1000).ToString("0.0") + " kW") : ((reactor.CurrentOutput).ToString("0.000") + " MW")), true);
-
-                    string loadGraphic = "";
-                    for (int i = 0; i < 15; i++)
+                    IMyTextSurface reactor_monitor;
+                    if (!monitorKeys.TryGetValue((IMyTerminalBlock)reactor, out reactor_monitor)) continue;
+                    reactor_monitor.ContentType = (ContentType)(1);
+                    reactor_monitor.FontColor = green;
+                    reactor_monitor.FontSize = 1.25f;
+                    
+                    reactor_monitor.WriteText("Status: " + (reactor.Enabled ? "ON" : "OFF"), false);
+                    if (reactor.Enabled == true)
                     {
-                        if (i * 20 < reactor.CurrentOutput)
+                        reactor_monitor.WriteText("\nCurrent Output: " + ((reactor.CurrentOutput < 1f) ? ((reactor.CurrentOutput * 1000).ToString("0.0") + " kW") : ((reactor.CurrentOutput).ToString("0.000") + " MW")), true);
+
+                        string loadGraphic = "";
+                        for (int i = 0; i < 15; i++)
                         {
-                            loadGraphic += "+";
-                        } else {
-                            loadGraphic += "=";
+                            if (i * 20 < reactor.CurrentOutput)
+                            {
+                                loadGraphic += "+";
+                            } else {
+                                loadGraphic += "=";
+                            }
+                        }
+
+                        reactor_monitor.WriteText("\nLoad: [" + loadGraphic + "]", true);
+                    } else {
+                        // "Status: OFF", no further text
+                    }
+                }
+
+                // END REACTOR MONITORING //
+
+                
+
+                // POWER USAGE & HEURISTICS //
+
+                // Maximum output power for complete grid
+                double maxPowerOutput = 0d;
+                List<IMyPowerProducer> powerProducers = new List<IMyPowerProducer>();
+                GridTerminalSystem.GetBlocksOfType<IMyPowerProducer>(powerProducers);
+
+                foreach (IMyPowerProducer producer in powerProducers) maxPowerOutput += producer.MaxOutput;
+
+                List<IMyTextSurfaceProvider> allBlockDisplays = new List<IMyTextSurfaceProvider>();
+                GridTerminalSystem.GetBlocksOfType<IMyTextSurfaceProvider>(allBlockDisplays);
+
+                foreach (IMyTextSurfaceProvider block in allBlockDisplays)
+                {
+                    if (((IMyTerminalBlock)block).CustomData.ToLower().Contains("heuristics"))
+                    {
+                        int pwrUsageSurface = 0, pwrStorageSurface = 0;
+                        string[] tokens = ((IMyTerminalBlock)block).CustomData.Split(majorDelim);
+                        if (tokens.Length > 1)
+                        {
+                            string tokenLast = "";
+                            foreach (string token in tokens)
+                            {
+                                if (tokenLast.ToLower().Contains("powerusage") && int.TryParse(token, out pwrUsageSurface))
+                                {
+                                    // Print out Power Usage heuristics here!
+                                    /*
+                                    _
+                                     |
+                                     |
+                                     |
+                                     |
+                                    _|
+                                     |
+                                     |
+                                     |
+                                     |
+                                    _|
+                                     |              ______
+                                     |       ______|======|
+                                     |      |//////|======|
+                                     |______|//////|======|
+                                    _|//////|//////|======|
+                                     |//////|//////|======|
+                                     |//////|//////|======|
+                                     |//////|//////|======|
+                                     |//////|//////|======|
+                                    _|______|______|======|______|______|______|______|______|______|______|
+
+                                    */
+                                }
+                                if (tokenLast.ToLower().Contains("powerstorage") && int.TryParse(token, out pwrStorageSurface))
+                                {
+                                    // Print out Power Storage heuristics here!
+                                }
+
+                                tokenLast = token;
+                            }
                         }
                     }
-
-                    reactor_monitor.WriteText("\nLoad: [" + loadGraphic + "]", true);
-                } else {
-                    // "Status: OFF", no further text
                 }
+
+                // END POWER USAGE & HEURISTICS //
+
+                return true;
             }
-
-            // END REACTOR MONITORING //
-
-            return true;
+            return false;
         }
 
         bool breachDetection(List<IMyBlockGroup> airVentGroups, Dictionary<IMyBlockGroup,List<IMyDoor>> doorRoomKeys)
@@ -904,9 +980,14 @@ namespace IngameScript
                             // If a needed closing action is not yet queued, add it to the buffer
                             if (!isQueued) addDelay(new ActionDelay("closeDoor:" + door.CustomName.ToString(), closeDoorsTime), ref delayBuffer);
                         }
-
-                        // // If we've determined that this door should be closed, do so now
-                        // if (needsClosing) door.CloseDoor();
+                        else
+                        {
+                            // If door isn't fully open but is queued to close, remove from delayBuffer
+                            foreach (ActionDelay actionDelay in delayBuffer)
+                            {
+                                if (actionDelay.actionArg.ToLower().Contains(door.CustomName.ToString().ToLower())) removeList.Add(actionDelay);
+                            }
+                        }
 
                         // NOTE: If door is closed BEFORE closing delay expires, then needsClosing == false
                     }
@@ -1153,7 +1234,7 @@ namespace IngameScript
 
 
             // POWER MANAGEMENT //
-            powerManagement(allTerminalBlocks, monitorKeys);
+            powerManagement(allTerminalBlocks, monitorKeys, ref delayBuffer);
             // END POWER MANAGEMENT //
 
 
