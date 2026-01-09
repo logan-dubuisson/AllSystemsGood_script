@@ -4,6 +4,7 @@ using Sandbox.Game;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.EntityComponents;
+using Sandbox.Game.GUI;
 using Sandbox.ModAPI.Ingame;
 using Sandbox.ModAPI.Interfaces;
 using SpaceEngineers.Game.ModAPI.Ingame;
@@ -14,6 +15,7 @@ using System.Collections.Immutable;
 using System.Data;
 using System.Drawing;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Security.Permissions;
 using System.Text;
@@ -28,9 +30,11 @@ using VRage.Game.ModAPI;
 using VRage.Game.ModAPI.Ingame;
 using VRage.Game.ModAPI.Ingame.Utilities;
 using VRage.Game.ObjectBuilders.Definitions;
+using VRage.Library.Collections;
 using VRage.Network;
 using VRage.Scripting.MemorySafeTypes;
 using VRageMath;
+using VRageRender;
 using VRageRender.Utils;
 
 namespace IngameScript
@@ -110,9 +114,20 @@ namespace IngameScript
             ACTIVE_OUT_SEAL = 6,
             ACTIVE_OUT_DEPRESS = 7,
             ACTIVE_OUT_END = 8,
-        };
+        }
 
-        struct Room
+        [Flags] enum ErrorBits
+        {
+            PWR_MGMT_ERR = 1,
+            BREACH_ERR = 2,
+            WDT_ERR = 4,
+            AUTO_ALOCK_ERR = 8,
+            CLOSE_DOORS_ERR = 16,
+            CLEANUP_ERR = 32,
+            BUFFER_ERR = 64
+        }
+
+        public class Room
         {
             // Public member variables
             public string name;
@@ -137,7 +152,7 @@ namespace IngameScript
                 name = roomName;
                 vents = roomVents;
                 doors = roomDoors;
-                roomConnections = null;
+                roomConnections = new Dictionary<IMyDoor, string>();
                 
                 foreach (IMyDoor door in doors)
                 {
@@ -176,6 +191,8 @@ namespace IngameScript
         bool watchdogEnabled = true;
         bool autoAirlocksEnabled = true;
         bool closeDoorsEnabled = true;
+        bool adaptiveSuspensionEnabled = true;
+        bool flightPlansEnabled = true;
         bool execTimeExceeded = false;
         char[] majorDelim = {':','\n'};
         char[] minorDelim = {',','\t','='};
@@ -298,20 +315,28 @@ namespace IngameScript
             return new Room();
         }
 
+        int compareWheelOrder(IMyMotorSuspension wheel1, IMyMotorSuspension wheel2)
+        {
+            return (-wheel1.Position.Z).CompareTo(-wheel2.Position.Z);
+        }
+
         // END USER-DEFINED FUNCTIONS //
 
 
 
         // FEATURE FUNCTIONS //
 
-        bool argHandler(string argument, UpdateType updateSource)
+        void argHandler(string argument, UpdateType updateSource, ref List<ActionDelay> delays)
         {
             if (updateSource == UpdateType.Trigger && argument.Length > 0 && argument.ToLower().Contains("action:"))
             {
                 actionCall = argument.Substring("action:".Length, argument.Length - "action:".Length);
+
+                if (debug && actionCall.Contains("debugTrigger")) addDelay(new ActionDelay("debugTrigger", 10d), ref delays);
+                else addDelay(new ActionDelay(actionCall, 0), ref delays);
+                
                 Runtime.UpdateFrequency = (UpdateFrequency)(ticksPerRun);
-                argHandler(storedArgument, UpdateType.Terminal);
-                return true;
+                Main(storedArgument, UpdateType.Terminal);
             }
             else if (argument.Length > 0)
             {
@@ -344,7 +369,6 @@ namespace IngameScript
                             break;
                     }
                 }
-                return true;
             }
             else if (storedArgument != "")
             {
@@ -376,9 +400,7 @@ namespace IngameScript
                             break;
                     }
                 }
-                return true;
             }
-            return false;
         }
 
         bool powerManagement(List<IMyTerminalBlock> allTerminalBlocks, Dictionary<IMyTerminalBlock,IMyTextSurface> monitorKeys, ref List<ActionDelay> delays)
@@ -659,19 +681,19 @@ namespace IngameScript
             return true;
         }
 
-        bool autoAirlocks(List<IMyBlockGroup> airVentGroups, Dictionary<IMyBlockGroup,List<IMyDoor>> doorRoomKeys, ref List<ActionDelay> delayBuffer)
+        bool autoAirlocks(List<IMyBlockGroup> airVentGroups, Dictionary<IMyBlockGroup,List<IMyDoor>> doorRoomKeys, ref List<ActionDelay> delays)
         {
             if (autoAirlocksEnabled)
             {
                 List<ActionDelay> removeList = new List<ActionDelay>();
 
-                // If we've hit a button calling the Auto-Airlock action, add to buffer with no delay
-                if (actionCall.Contains("Auto-Airlocks:")) addDelay(new ActionDelay(actionCall, 0), ref delayBuffer);
+                // // If we've hit a button calling the Auto-Airlock action, add to buffer with no delay
+                // if (actionCall.Contains("Auto-Airlocks:")) addDelay(new ActionDelay(actionCall, 0), ref delays);
                 
                 // Checks each group if active airlock and continues/starts cycle if so
-                foreach (ActionDelay delay in delayBuffer)
+                foreach (ActionDelay delay in delays)
                 {
-                    string room = "";
+                    string room = "", internRoom = "";
                     AirlockStatus status = AirlockStatus.INACTIVE;
                     if (delay.actionArg.Contains("Auto-Airlocks:") && delay.delayTime == 0)
                     {
@@ -694,6 +716,10 @@ namespace IngameScript
                                 // Sets airlock room to be cycled
                                 case "room":
                                     room = tokens[1].ToLower();
+                                    if (tokens.Length > 2)
+                                    {
+                                        internRoom = tokens[2].Substring("int:".Length, tokens[2].Length - "int:".Length);
+                                    }
                                     break;
                                 // Determines direction (going into or coming out of pressurized side) and state of cycle
                                 case "state":
@@ -732,6 +758,7 @@ namespace IngameScript
                                     status = AirlockStatus.ERROR;
                                     break;
                             }
+                            if (status == AirlockStatus.ERROR) return false;
                         }
                     }
 
@@ -762,7 +789,7 @@ namespace IngameScript
                             {
                                 foreach (IMyDoor door in doors)
                                 {
-                                    if (door.CustomData.ToLower().Contains("exterior")) extDoors.Add(door);
+                                    if (door.CustomData.ToLower().Contains("exterior") || (internRoom != "" && !door.CustomData.ToLower().Contains(internRoom))) extDoors.Add(door);
                                     else if (door.CustomData.ToLower().Contains(roomName)) intDoors.Add(door);
                                 }
                             }
@@ -793,7 +820,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_start", "ext_seal"), airlockDoorDelayTime), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_start", "ext_seal"), airlockDoorDelayTime), ref delays);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -817,7 +844,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_start", "int_seal"), airlockDoorDelayTime), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_start", "int_seal"), airlockDoorDelayTime), ref delays);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -832,7 +859,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_seal", "ext_press"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_seal", "ext_press"), 0), ref delays);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -847,7 +874,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_seal", "int_depress"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_seal", "int_depress"), 0), ref delays);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -862,7 +889,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_press", "ext_end"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("ext_press", "ext_end"), 0), ref delays);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -877,7 +904,7 @@ namespace IngameScript
                                     }
                                     if (ready)
                                     {
-                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_depress", "int_end"), 0), ref delayBuffer);
+                                        addDelay(new ActionDelay(delay.actionArg.Replace("int_depress", "int_end"), 0), ref delays);
                                         removeList.Add(delay);
                                     }
                                     break;
@@ -916,12 +943,12 @@ namespace IngameScript
                     }
                 }
 
-                removeDelayList(removeList, ref delayBuffer);
+                removeDelayList(removeList, ref delays);
             }
             return true;
         }
 
-        bool closeDoors(List<IMyDoor> allDoors, ref List<ActionDelay> delayBuffer)
+        bool closeDoors(List<IMyDoor> allDoors, ref List<ActionDelay> delays)
         {
             if (closeDoorsEnabled)
             {
@@ -942,7 +969,7 @@ namespace IngameScript
                         {
                             // needsClosing = true;
                             // Check if we've already queued a closing action
-                            foreach (ActionDelay actionDelay in delayBuffer)
+                            foreach (ActionDelay actionDelay in delays)
                             {
                                 // If we have already queued a closing action
                                 if (actionDelay.actionArg.ToLower().Contains(door.CustomName.ToString().ToLower()))
@@ -978,12 +1005,12 @@ namespace IngameScript
                             }
 
                             // If a needed closing action is not yet queued, add it to the buffer
-                            if (!isQueued) addDelay(new ActionDelay("closeDoor:" + door.CustomName.ToString(), closeDoorsTime), ref delayBuffer);
+                            if (!isQueued) addDelay(new ActionDelay("closeDoor:" + door.CustomName.ToString(), closeDoorsTime), ref delays);
                         }
                         else
                         {
                             // If door isn't fully open but is queued to close, remove from delayBuffer
-                            foreach (ActionDelay actionDelay in delayBuffer)
+                            foreach (ActionDelay actionDelay in delays)
                             {
                                 if (actionDelay.actionArg.ToLower().Contains(door.CustomName.ToString().ToLower())) removeList.Add(actionDelay);
                             }
@@ -992,12 +1019,110 @@ namespace IngameScript
                         // NOTE: If door is closed BEFORE closing delay expires, then needsClosing == false
                     }
                 }
-                removeDelayList(removeList, ref delayBuffer);
+                removeDelayList(removeList, ref delays);
             }
             return true;
         }
 
-        bool cleanupBuffer(ref List<ActionDelay> delayBuffer)
+        bool adaptiveSuspension(IMyShipController mainCockpit, ref List<IMyMotorSuspension> wheels, ref List<ActionDelay> delays)
+        {
+            if (adaptiveSuspensionEnabled)
+            {
+                // Default wheel height in cm
+                double defaultHeight = -0.05;
+                // Minimum tolerance angle before suspension compesation takes effect (default: 0.5 degrees)
+                double angleTolerance = (0.5 / 180d) * Math.PI;
+                // Maximum wheel height offset travel in meters (default: 0.1m or 10cm)
+                double maxWheelTravel = 0.10;
+
+                if (mainCockpit.CustomData.Length > 0)
+                {
+                    string[] tokens = mainCockpit.CustomData.Split(majorDelim);
+                    string tokenLast = "";
+                    foreach (string token in tokens)
+                    {
+                        if (tokenLast.ToLower() == "default wheel height")
+                        {
+                            double.TryParse(token, out defaultHeight);
+                        }
+
+                        if (tokenLast.ToLower() == "angle tolerance")
+                        {
+                            double tolRadians = 1.0;
+                            double.TryParse(token, out tolRadians);
+                            angleTolerance = (tolRadians / 180d) * Math.PI;
+                        }
+
+                        if (tokenLast.ToLower() == "max wheel travel")
+                        {
+                            double.TryParse(token, out maxWheelTravel);
+                        }
+
+                        tokenLast = token;
+                    }
+                }
+
+                Vector3D gravityVectorNorm = Vector3D.Normalize(mainCockpit.GetNaturalGravity());
+                //VRage.Game.ModAPI.Ingame.IMyCubeGrid grid = mainCockpit.CubeGrid;
+                MatrixD gridMatrix = mainCockpit.CubeGrid.WorldMatrix;
+                MyBlockOrientation orientation = mainCockpit.Orientation;
+                Vector3D centerOfMass = mainCockpit.CenterOfMass;
+
+                // Get offset from gravitational vector
+                Vector3D downAxisNorm = Vector3D.Normalize(gridMatrix.Down);
+                Vector3D offsetVector = Vector3D.Subtract(downAxisNorm, gravityVectorNorm).Normalized();
+
+                // If offset from gravitational vector > tolerance...
+                if (Math.Abs(Vector3D.Angle(gravityVectorNorm, downAxisNorm)) > angleTolerance)
+                {
+                    // List<IMyMotorSuspension> leftWheels = new List<IMyMotorSuspension>();
+                    // List<IMyMotorSuspension> rightWheels = new List<IMyMotorSuspension>();
+
+                    foreach (IMyMotorSuspension wheel in wheels)
+                    {
+                        Vector3D gridRight = gridMatrix.Right;
+                        Vector3D wheelPos = (Vector3D)wheel.Position;
+
+                        // Vector3D wheelAdaptVector = wheelPos.Dot(gravityVectorNorm)
+                        double wheelAdaptVal = wheelPos.Dot(gravityVectorNorm) / wheelPos.Length();
+                        wheel.Height = (float)(defaultHeight + (wheelAdaptVal * maxWheelTravel / 2));
+
+                        // // Determine wheel side and order
+                        // if (gridRight.Dot(ref wheelPos) > 0) rightWheels.Add(wheel);
+                        // else if (gridRight.Dot(ref wheelPos) < 0) leftWheels.Add(wheel);
+                    }
+
+                    // // Sort wheel orders
+                    // leftWheels.Sort(compareWheelOrder);
+                    // rightWheels.Sort(compareWheelOrder);
+
+                    // // Set wheel properties
+                    // ;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        bool flightPlans(IMyShipController mainCockpit, List<IMyThrust> thrusters, ref List<ActionDelay> delays)
+        {
+            if (flightPlansEnabled)
+            {
+                // bool inGravField = false;
+
+                Vector3D gravityVector = mainCockpit.GetNaturalGravity();
+                double altitude = 0d;
+                if (mainCockpit.TryGetPlanetElevation(MyPlanetElevation.Surface, out altitude) && !gravityVector.IsZero()) // inGravField = true;
+                {
+                    // Calculate planetary maneuvers (i.e., suicide burn T- time, tilt warning angle)
+                }
+
+                return true;
+            }
+            return false;
+        }
+
+        bool cleanupBuffer(ref List<ActionDelay> delays)
         {
             string delayDebugInfo = "";
             // Debug delay buffer
@@ -1005,9 +1130,13 @@ namespace IngameScript
             {
                 delayDebugInfo = "Delays:";
                 ulong delayCount = 0;
+
                 ActionDelay debugDelay = null;
                 bool hasDebugDelay = false;
-                foreach (ActionDelay delay in delayBuffer)
+
+                ActionDelay debugTrigger = null;
+
+                foreach (ActionDelay delay in delays)
                 {
                     delayDebugInfo += "\n"+ ++delayCount + ")\n" + delay.actionArg + "\n" + delay.delayTime + " ticks\n" + ((float)delay.delayTime / secToRuns).ToString("0.00") + " seconds";
                     if (delay.actionArg == "debugDelay")
@@ -1015,43 +1144,49 @@ namespace IngameScript
                         debugDelay = delay;
                         hasDebugDelay = true;
                     }
+                    else if (delay.actionArg == "debugTrigger")
+                    {
+                        debugTrigger = delay;
+                    }
                 }
                 
                 Echo("\nDelay Buffer: " + (hasDebugDelay ? "OPERATIONAL" : "COMPROMISED"));
-                if (!hasDebugDelay) addDelay(new ActionDelay("debugDelay", 1), ref delayBuffer);
+                if (!hasDebugDelay) addDelay(new ActionDelay("debugDelay", 1), ref delays);
                 else if (debugDelay != null && debugDelay.delayTime == 0)
                 {
-                    delayBuffer.Remove(debugDelay);
-                    addDelay(new ActionDelay("debugDelay", 1), ref delayBuffer);
+                    delays.Remove(debugDelay);
+                    addDelay(new ActionDelay("debugDelay", 1), ref delays);
                 }
+
+                if (debugTrigger != null && debugTrigger.delayTime == 0) delays.Remove(debugTrigger);
             }
 
             // Ensure buffer is sorted
-            delayBuffer.Sort(compareDelays);
+            delays.Sort(compareDelays);
 
             if (debug)
             {
-                Echo("Number of active delays: " + delayBuffer.Count());
+                Echo("Number of active delays: " + delays.Count());
                 Echo("\n" + delayDebugInfo);
             }
 
             // Check for missed actions in buffer
-            // for (int i = 0; i < delayBuffer.Count; i++)
+            // for (int i = 0; i < delays.Count; i++)
             // {
-            //     // if (delayBuffer[i].delayTime == 0) Echo("ERROR: ACTION \"" + delayBuffer[i].actionArg + "\" FAILED TO EXECUTE");
-            //     // else delayBuffer[i] = new ActionDelay(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
-            //     delayBuffer[i].delayTime = 1;
-            //     delayBuffer[i] = new ActionDelay(delayBuffer[i].actionArg, delayBuffer[i].delayTime - 1);
+            //     // if (delays[i].delayTime == 0) Echo("ERROR: ACTION \"" + delays[i].actionArg + "\" FAILED TO EXECUTE");
+            //     // else delays[i] = new ActionDelay(delays[i].actionArg, delays[i].delayTime - 1);
+            //     delays[i].delayTime = 1;
+            //     delays[i] = new ActionDelay(delays[i].actionArg, delays[i].delayTime - 1);
             // }
 
             bool status = true;
 
-            for (int i = 0; i < delayBuffer.Count; i++)
+            for (int i = 0; i < delays.Count; i++)
             {
-                ulong prevTime = delayBuffer[i].delayTime;
-                if (delayBuffer[i].delayTime > 0) --delayBuffer[i].delayTime;
-                status = prevTime > delayBuffer[i].delayTime;
-                if (debug) Echo("\nTick " + delayBuffer[i].actionArg + " " + (status ? "succeeded" : "failed"));
+                ulong prevTime = delays[i].delayTime;
+                if (delays[i].delayTime > 0) --delays[i].delayTime;
+                status = prevTime > delays[i].delayTime;
+                if (debug) Echo("\nTick " + delays[i].actionArg + " " + (status ? "succeeded" : "failed"));
             }
 
             return true;
@@ -1121,6 +1256,9 @@ namespace IngameScript
 
             // LOCAL INIT //
 
+            // Error checking bit-field
+            ErrorBits errorFlags = 0;
+
             // Loading Stored Data //
             string storedArgument = "";
             ulong storedTicks = 0;
@@ -1166,7 +1304,7 @@ namespace IngameScript
             }
 
             // Argument Handler //
-            argHandler(argument, updateSource);
+            argHandler(argument, updateSource, ref delayBuffer);
 
             // Core Debug //
             Echo(Me.CustomName);
@@ -1234,7 +1372,7 @@ namespace IngameScript
 
 
             // POWER MANAGEMENT //
-            powerManagement(allTerminalBlocks, monitorKeys, ref delayBuffer);
+            if (!powerManagement(allTerminalBlocks, monitorKeys, ref delayBuffer)) errorFlags = errorFlags | ErrorBits.PWR_MGMT_ERR;
             // END POWER MANAGEMENT //
 
 
@@ -1282,31 +1420,46 @@ namespace IngameScript
 
 
             // HULL BREACH PROTOCOLS //
-            breachDetection(airVentGroups, doorRoomKeys);
+            if (!breachDetection(airVentGroups, doorRoomKeys)) errorFlags = errorFlags | ErrorBits.BREACH_ERR;
             // END HULL BREACH PROTOCOLS //
 
 
 
             // REFRESH WATCHDOG TIMER //
-            watchdogTimer();
+            if (!watchdogTimer()) errorFlags = errorFlags | ErrorBits.WDT_ERR;
             // END REFRESH WATCHDOG TIMER //
 
 
 
             // AUTO-AIRLOCKS //
-            autoAirlocks(airVentGroups, doorRoomKeys, ref delayBuffer);
+            if (!autoAirlocks(airVentGroups, doorRoomKeys, ref delayBuffer)) errorFlags = errorFlags | ErrorBits.AUTO_ALOCK_ERR;
             // END AUTO-AIRLOCKS //
 
 
 
             // CLOSE DOORS //
-            closeDoors(allDoors, ref delayBuffer);
+            if (!closeDoors(allDoors, ref delayBuffer)) errorFlags = errorFlags | ErrorBits.CLOSE_DOORS_ERR;
             // END CLOSE DOORS //
 
 
             // DELAY BUFFER CLEANUP & DEBUG //
-            cleanupBuffer(ref delayBuffer);
+            if (!cleanupBuffer(ref delayBuffer)) errorFlags = errorFlags | ErrorBits.CLEANUP_ERR;
             // END BUFFER CLEANUP & DEBUG //
+
+            if (errorFlags != 0)
+            {
+                // Catch errors, report, and pause program
+                Echo("\nERRORS:");
+                if ((errorFlags & ErrorBits.PWR_MGMT_ERR) != 0) Echo(" - Power Management");
+                if ((errorFlags & ErrorBits.BREACH_ERR) != 0) Echo(" - Breach Detection");
+                if ((errorFlags & ErrorBits.WDT_ERR) != 0) Echo(" - Watchdog Timer");
+                if ((errorFlags & ErrorBits.AUTO_ALOCK_ERR) != 0) Echo(" - Auto-Airlocks");
+                if ((errorFlags & ErrorBits.CLOSE_DOORS_ERR) != 0) Echo(" - Close Doors");
+                if ((errorFlags & ErrorBits.CLEANUP_ERR) != 0) Echo(" - Buffer Cleanup");
+
+                // Stop execution with inf. while loop
+                while(true);
+            }
 
         }
         // END OF USER CODE //
