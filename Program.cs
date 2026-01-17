@@ -171,6 +171,14 @@ namespace IngameScript
             }
         }
 
+        enum RemoteTargetingStatus
+        {
+            ERROR = -1,
+            SOLUTION_NOT_FOUND = 0,
+            NOT_READY = 1,
+            FIRING = 2
+        }
+
         // END CUSTOM TYPES //
 
 
@@ -193,6 +201,8 @@ namespace IngameScript
         bool closeDoorsEnabled = true;
         bool adaptiveSuspensionEnabled = true;
         bool flightPlansEnabled = true;
+        bool commandAndControlEnabled = true;
+        bool remoteTargetingEnabled = true;
         bool execTimeExceeded = false;
         char[] majorDelim = {':','\n'};
         char[] minorDelim = {',','\t','='};
@@ -318,6 +328,11 @@ namespace IngameScript
         int compareWheelOrder(IMyMotorSuspension wheel1, IMyMotorSuspension wheel2)
         {
             return (-wheel1.Position.Z).CompareTo(-wheel2.Position.Z);
+        }
+
+        bool isFiringSolution(IMyTerminalBlock block)
+        {
+            return block.CustomData.ToLower().Contains("firing solution");
         }
 
         // END USER-DEFINED FUNCTIONS //
@@ -1029,18 +1044,22 @@ namespace IngameScript
             if (adaptiveSuspensionEnabled)
             {
                 // Default wheel height in cm
-                double defaultHeight = -0.05;
+                double defaultHeight = -0.10;
                 // Minimum tolerance angle before suspension compesation takes effect (default: 0.5 degrees)
                 double angleTolerance = (0.5 / 180d) * Math.PI;
-                // Maximum wheel height offset travel in meters (default: 0.1m or 10cm)
-                double maxWheelTravel = 0.10;
-
+                // Maximum wheel height offset travel in meters (default: 0.2m or 20cm)
+                double maxWheelTravel = 0.20;
+                // Maximum angle for max wheel travel (default: 45.0 degrees)
+                double maxAngle = (0.5 / 180d) * Math.PI;
+ 
                 if (mainCockpit.CustomData.Length > 0)
                 {
                     string[] tokens = mainCockpit.CustomData.Split(majorDelim);
                     string tokenLast = "";
-                    foreach (string token in tokens)
+                    foreach (string tokenFull in tokens)
                     {
+                        string token = tokenFull.Trim();
+
                         if (tokenLast.ToLower() == "default wheel height")
                         {
                             double.TryParse(token, out defaultHeight);
@@ -1048,7 +1067,7 @@ namespace IngameScript
 
                         if (tokenLast.ToLower() == "angle tolerance")
                         {
-                            double tolRadians = 1.0;
+                            double tolRadians = (0.5 / 180d) * Math.PI;
                             double.TryParse(token, out tolRadians);
                             angleTolerance = (tolRadians / 180d) * Math.PI;
                         }
@@ -1056,6 +1075,13 @@ namespace IngameScript
                         if (tokenLast.ToLower() == "max wheel travel")
                         {
                             double.TryParse(token, out maxWheelTravel);
+                        }
+
+                        if (tokenLast.ToLower() == "max angle")
+                        {
+                            double maxAngleRadians = (45.0 / 180d) * Math.PI;
+                            double.TryParse(token, out maxAngleRadians);
+                            maxAngle = (maxAngleRadians / 180d) * Math.PI;
                         }
 
                         tokenLast = token;
@@ -1070,10 +1096,11 @@ namespace IngameScript
 
                 // Get offset from gravitational vector
                 Vector3D downAxisNorm = Vector3D.Normalize(gridMatrix.Down);
-                Vector3D offsetVector = Vector3D.Subtract(downAxisNorm, gravityVectorNorm).Normalized();
+                // Vector3D offsetVector = Vector3D.Subtract(downAxisNorm, gravityVectorNorm).Normalized();
+                double offsetAngle = Math.Abs(Vector3D.Angle(gravityVectorNorm, downAxisNorm));
 
                 // If offset from gravitational vector > tolerance...
-                if (Math.Abs(Vector3D.Angle(gravityVectorNorm, downAxisNorm)) > angleTolerance)
+                if (offsetAngle > angleTolerance & offsetAngle < maxAngle)
                 {
                     // List<IMyMotorSuspension> leftWheels = new List<IMyMotorSuspension>();
                     // List<IMyMotorSuspension> rightWheels = new List<IMyMotorSuspension>();
@@ -1082,6 +1109,8 @@ namespace IngameScript
                     {
                         Vector3D gridRight = gridMatrix.Right;
                         Vector3D wheelPos = (Vector3D)wheel.Position;
+                        // Adjust vertical (up/down) component of wheel position vector to match max angle vector
+                        wheelPos.Y = 0;
 
                         // Vector3D wheelAdaptVector = wheelPos.Dot(gravityVectorNorm)
                         double wheelAdaptVal = wheelPos.Dot(gravityVectorNorm) / wheelPos.Length();
@@ -1109,14 +1138,77 @@ namespace IngameScript
             if (flightPlansEnabled)
             {
                 // bool inGravField = false;
+                double impactTime = 0d;
+                double burnStartTminus = 0d;
 
                 Vector3D gravityVector = mainCockpit.GetNaturalGravity();
                 double altitude = 0d;
-                if (mainCockpit.TryGetPlanetElevation(MyPlanetElevation.Surface, out altitude) && !gravityVector.IsZero()) // inGravField = true;
+                if (mainCockpit.TryGetPlanetElevation(MyPlanetElevation.Surface, out altitude) /*& !gravityVector.IsZero()*/) // inGravField = true;
                 {
                     // Calculate planetary maneuvers (i.e., suicide burn T- time, tilt warning angle)
+                    Vector3D shipVelocity = mainCockpit.GetShipVelocities().LinearVelocity;
+                    double gravityMag = gravityVector.Length();
+                    double shipDownVelocity = shipVelocity.Dot(gravityVector.Normalized());
+
+                    // Time to impact: x = 0.5 * a_g * t^2 + v_down * t + x_alt
+                    // x = 0 --> t = (-v_down +/- sqrt(v_down^2 - 4 * (0.5 * a_g) * x_alt)) / (2 * (0.5 * a_g))
+                    impactTime = (-shipDownVelocity + Math.Sqrt(shipDownVelocity * shipDownVelocity - 2 * gravityMag * altitude)) / gravityMag;
+
+                    // Suicide burn start time = ...
+                    burnStartTminus = 0;
                 }
 
+                return true;
+            }
+            return false;
+        }
+
+        bool commandAndControl(ref List<ActionDelay> delays)
+        {
+            if (commandAndControlEnabled)
+            {
+                List<IMyRadioAntenna> antennas = new List<IMyRadioAntenna>();
+                GridTerminalSystem.GetBlocksOfType<IMyRadioAntenna>(antennas);
+                
+                //
+                if (remoteTargetingEnabled)
+                {
+                    List<IMyProgrammableBlock> firingSolutionsOnGrid = new List<IMyProgrammableBlock>();
+                    GridTerminalSystem.GetBlocksOfType<IMyProgrammableBlock>(firingSolutionsOnGrid, isFiringSolution);
+
+                    IMyBroadcastListener targetingListener = IGC.RegisterBroadcastListener("targetingRequest");
+                    if (targetingListener.HasPendingMessage)
+                    {
+                        RemoteTargetingStatus status = RemoteTargetingStatus.SOLUTION_NOT_FOUND;
+                        MyIGCMessage targetingRequest = targetingListener.AcceptMessage();
+                        MyTuple<string, Vector3D, VRageMath.Vector3> targetingTelemetry = targetingRequest.As<MyTuple<string, Vector3D, VRageMath.Vector3>>();
+
+                        string firingSolution = targetingTelemetry.Item1;
+                        Vector3D targetPosition = targetingTelemetry.Item2;
+                        VRageMath.Vector3 targetVelocity = targetingTelemetry.Item3;
+
+                        if (firingSolutionsOnGrid.Count > 0)
+                        {
+                            foreach (IMyProgrammableBlock solution in firingSolutionsOnGrid)
+                            {
+                                if (solution.CustomData.ToLower().Contains(firingSolution.ToLower()))
+                                {
+                                    if (solution.CustomData.ToLower().Contains("not_ready")) status = RemoteTargetingStatus.NOT_READY;
+                                    else if (solution.CustomData.ToLower().Contains("ready"))
+                                    {
+                                        // IGC Send: Firing solution
+                                        status = RemoteTargetingStatus.FIRING;
+                                        // Fire selected targeting solution
+                                    }
+                                }
+                                else if (solution.Equals(firingSolutionsOnGrid.Last()) & status == RemoteTargetingStatus.SOLUTION_NOT_FOUND)
+                                {
+                                    // IGC Send: Solution not found
+                                }
+                            }
+                        }
+                    }
+                }
                 return true;
             }
             return false;
